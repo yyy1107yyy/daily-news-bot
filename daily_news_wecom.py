@@ -1,45 +1,43 @@
 import os
 import re
 import json
+import time
 import urllib.parse
 import requests
 import feedparser
-import akshare as ak
 from datetime import datetime, timezone, timedelta
 
 WECOM_WEBHOOK_URL = os.environ["WECOM_WEBHOOK_URL"]
 
 def get_world_news_rss() -> list:
-    """源 1：国际政治宏观头条（精选多条，自动裁剪过长标题）"""
+    """源 1：国际政治宏观头条"""
     rss_url = "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx1YlY4U0FtVnVHZ0pWVXlnQVAB?hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
     news_list = []
     try:
         feed = feedparser.parse(rss_url)
-        for entry in feed.entries[:10]:
-            title = entry.title.rsplit(" - ", 1)[0]
-            if len(title) > 28:
-                title = title[:26] + "..."
-            short_q = urllib.parse.quote(title[:20])
-            short_link = f"https://www.bing.com/news/search?q={short_q}"
-            news_list.append(f"- [{title}]({short_link})")
-    except Exception as e:
+        for entry in feed.entries[:8]:
+            raw_title = entry.title.rsplit(" - ", 1)[0]
+            show_title = raw_title[:28] + "..." if len(raw_title) > 30 else raw_title
+            short_q = urllib.parse.quote(raw_title[:10])
+            short_link = f"https://cn.bing.com/news/search?q={short_q}"
+            news_list.append({"title": raw_title, "md": f"- [{show_title}]({short_link})"})
+    except Exception:
         pass
     return news_list
 
 def get_custom_user_rss() -> list:
-    """源 2：专属财经资讯源（精选多条）"""
-    custom_rss_url = "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRG9nTDJoMWVtdHNBWGhvWVd4bUv0gAE?hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
+    """源 2：专属财经/黄金/能源/宏观动态 RSS（已修复为空的问题）"""
+    custom_rss_url = "https://news.google.com/rss/search?q=%E8%B4%A2%E7%BB%8F+OR+%E9%BB%84%E9%87%91+OR+%E5%8E%9F%E6%B2%B9+OR+%E7%BE%8E%E8%81%94%E5%82%A8+OR+A%E8%82%A1&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
     news_list = []
     try:
         feed = feedparser.parse(custom_rss_url)
-        for entry in feed.entries[:10]:
-            title = entry.title.rsplit(" - ", 1)[0]
-            if len(title) > 28:
-                title = title[:26] + "..."
-            short_q = urllib.parse.quote(title[:20])
-            short_link = f"https://www.bing.com/news/search?q={short_q}"
-            news_list.append(f"- 🎯 [{title}]({short_link})")
-    except Exception as e:
+        for entry in feed.entries[:6]:
+            raw_title = entry.title.rsplit(" - ", 1)[0]
+            show_title = raw_title[:28] + "..." if len(raw_title) > 30 else raw_title
+            short_q = urllib.parse.quote(raw_title[:10])
+            short_link = f"https://cn.bing.com/news/search?q={short_q}"
+            news_list.append({"title": raw_title, "md": f"- 🎯 [{show_title}]({short_link})"})
+    except Exception:
         pass
     return news_list
 
@@ -71,59 +69,83 @@ def get_market_quotes() -> list:
     return quotes
 
 def generate_ai_insights(quotes: list, world_news: list, custom_news: list) -> str:
-    """调用 AI 生成精炼策略，确保无杂质"""
+    """调用 AI 生成深度策略（标准 JSON 解析 + 多重快速重试，绝不误杀正常回复）"""
     quotes_str = " | ".join(quotes)
-    all_news = world_news + custom_news
-    news_str = "\n".join(all_news[:15])
+    all_titles = [n["title"] for n in world_news + custom_news if n.get("title")]
+    news_str = "\n".join([f"- {t}" for t in all_titles[:14]])
     
-    prompt = f"""宏观资讯参考：
+    prompt = f"""最新国际与财经要闻：
 {news_str}
 
-盘面：{quotes_str}
+核心ETF盘面：{quotes_str}
 
-请作为顶尖宏观策略师，用纯中文输出 250 字左右的精炼点评（严禁任何JSON或英文，从 `### 1.` 开始）：
-### 1. 核心地缘与宏观洞察
-- （一针见血总结当前主要风险）
-### 2. ETF 应对纪律
-- （给出简明扼要的仓位操作建议）"""
+请作为首席宏观策略师，直接用中文输出一份 300 字左右的深度点评与实战操作建议，分为以下两部分：
+**1. 核心地缘与宏观洞察**
+（结合上述新闻分析当前地缘冲突、通胀或资金情绪演变）
+**2. 核心 ETF 实战应对策略**
+（分别针对中概513050、黄金517520/518880、有色512400、能源159930给出具体操作建议）"""
 
-    models = ["openai-large", "mistral", "openai"]
-    for model_name in models:
+    # 通道 1：使用响应最快的标准接口轮询重试 3 次
+    for attempt in range(3):
         try:
             r = requests.post(
                 "https://text.pollinations.ai/openai",
                 json={
-                    "model": model_name,
+                    "model": "openai",
                     "messages": [
-                        {"role": "system", "content": "你是专业宏观策略师，只输出纯中文Markdown正文。"},
+                        {"role": "system", "content": "你是一位专业的宏观与ETF实战策略师，只输出纯中文Markdown正文，不要输出任何英文思考过程。"},
                         {"role": "user", "content": prompt}
                     ],
-                    "temperature": 0.5
+                    "temperature": 0.6
                 },
-                timeout=40
+                timeout=30
             )
             if r.status_code == 200:
-                raw_text = r.text.strip()
-                if '"reasoning":' in raw_text or '{"tool_calls":' in raw_text:
-                    try:
-                        data = json.loads(raw_text)
-                        if "choices" in data:
-                            raw_text = data["choices"][0]["message"]["content"]
-                    except Exception:
-                        pass
-                clean_text = raw_text.replace("\\n", "\n").replace('\\"', '"')
-                if "### 1." in clean_text:
-                    match = re.search(r"(###\s*1\..*)", clean_text, re.DOTALL)
-                    if match:
-                        return re.sub(r"[\"}\]]+\s*$", "", match.group(1)).strip()
-        except Exception:
-            continue
-    return "### 1. 核心地缘与宏观洞察\n- 局势震荡加剧，风险偏好低位徘徊。\n### 2. ETF 应对纪律\n- 严守仓位，逢低关注避险与能源配置。"
+                content = ""
+                try:
+                    data = r.json()
+                    if isinstance(data, dict) and "choices" in data:
+                        content = data["choices"][0].get("message", {}).get("content", "")
+                except Exception:
+                    content = r.text
+                
+                content = content.strip()
+                # 如果还是带了未解析的 JSON 外壳，做二次提取
+                if '{"choices":' in content or '"reasoning":' in content:
+                    m = re.search(r'"content"\s*:\s*"(.*?)"\s*,\s*"(?:reasoning|tool_calls|refusal)"', content, re.DOTALL)
+                    if m:
+                        content = m.group(1).replace("\\n", "\n").replace('\\"', '"').strip()
+                
+                if len(content) > 50 and "reasoning" not in content:
+                    return content
+        except Exception as e:
+            print(f"主通道第 {attempt+1} 次尝试异常: {e}")
+            time.sleep(2)
 
-def push_msg(text: str):
-    payload = {"msgtype": "markdown", "markdown": {"content": text}}
+    # 通道 2：极速纯文本备用通道
+    try:
+        r2 = requests.post(
+            "https://text.pollinations.ai/",
+            json={
+                "messages": [
+                    {"role": "system", "content": "你是专业宏观策略师，只输出中文。"},
+                    {"role": "user", "content": prompt}
+                ],
+                "model": "openai"
+            },
+            timeout=30
+        )
+        if r2.status_code == 200 and len(r2.text.strip()) > 50:
+            return r2.text.strip()
+    except Exception:
+        pass
+
+    return "**1. 核心地缘与宏观洞察**\n- 当前国际地缘风险持续发酵，市场避险情绪升温，资金在风险资产与避险板块间高频博弈。\n**2. 核心 ETF 实战应对策略**\n- **中概与有色**：短线承压，严控仓位耐心等待企稳信号。\n- **黄金与能源**：受益于地缘溢价支撑，逢回调可关注分批配置机会。"
+
+def send_wecom_md(content: str):
+    payload = {"msgtype": "markdown", "markdown": {"content": content}}
     resp = requests.post(WECOM_WEBHOOK_URL, json=payload, timeout=15)
-    print(f"推送响应码: {resp.status_code}, 返回内容: {resp.text}")
+    print(f"推送状态: {resp.status_code}, 响应: {resp.text}")
 
 if __name__ == "__main__":
     bj_time = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M")
@@ -131,14 +153,13 @@ if __name__ == "__main__":
     world_news = get_world_news_rss()
     custom_news = get_custom_user_rss()
     quotes = get_market_quotes()
-    
     ai_text = generate_ai_insights(quotes, world_news, custom_news)
     
-    world_md = "\n".join(world_news) if world_news else "- 暂无"
-    custom_md = "\n".join(custom_news) if custom_news else "- 暂无"
+    world_md = "\n".join([n["md"] for n in world_news]) if world_news else "- 暂无"
+    custom_md = "\n".join([n["md"] for n in custom_news]) if custom_news else "- 暂无"
     quotes_md = "\n".join(quotes) if quotes else "- 暂无"
     
-    msg = f"""🌍 **【宏观战情定期速报】**
+    full_msg = f"""🌍 **【宏观战情定期速报】**
 > 更新时间：{bj_time}
 
 ### 一、 国际政治宏观头条
@@ -152,6 +173,28 @@ if __name__ == "__main__":
 
 ### 四、 💡 首席策略师点评
 {ai_text}"""
-    
-    push_msg(msg)
-    print("完美单条战报推送完成！")
+
+    # 企业微信单条 Markdown 限制为 4096 字节（UTF-8）
+    if len(full_msg.encode("utf-8")) <= 3950:
+        send_wecom_md(full_msg)
+    else:
+        # 若内容极多超出单条字节上限，优雅分为“资讯盘面卡”与“AI策略卡”两张完整卡片推送
+        part1_msg = f"""🌍 **【宏观战情定期速报（上：资讯与盘面）】**
+> 更新时间：{bj_time}
+
+### 一、 国际政治宏观头条
+{world_md}
+
+### 二、 🎯 专属财经订阅动态
+{custom_md}
+
+### 三、 核心关注 ETF 盘面
+{quotes_md}"""
+
+        part2_msg = f"""💡 **【宏观战情定期速报（下：首席策略师点评）】**
+> 更新时间：{bj_time}
+
+{ai_text}"""
+        send_wecom_md(part1_msg)
+        time.sleep(1)
+        send_wecom_md(part2_msg)
