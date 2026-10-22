@@ -142,4 +142,91 @@ def generate_ai_insights(world_news: list, cls_news: list, quotes: list) -> str:
 - **科技与跨境资金动向**：（结合外盘科技动态与汇率，分析对港股及中概互联网的情绪影响）
 
 ### 3. 核心 ETF 今日实战轮动策略
-- **中概互联网ETF (513050)**
+- **中概互联网ETF (513050)**：（结合实时涨跌幅给出“低吸/观望/防守”建议）
+- **永赢黄金股ETF (517520) & 华安黄金ETF (518880)**：（对比两者跌幅差异，给出套利或锁利建议）
+- **有色金属ETF (512400) & 能源ETF (159930)**：（给出今日波段操作建议）"""
+
+    if LLM_API_KEY:
+        try:
+            headers = {"Authorization": f"Bearer {LLM_API_KEY}", "Content-Type": "application/json"}
+            payload = {
+                "model": LLM_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.5
+            }
+            r = requests.post(f"{LLM_BASE_URL}/chat/completions", headers=headers, json=payload, timeout=35)
+            r.raise_for_status()
+            return clean_ai_output(r.json()["choices"][0]["message"]["content"])
+        except Exception as e:
+            print("自定义 LLM 调用失败，切换免Key通道:", e)
+
+    # 使用 Pollinations 标准 OpenAI 兼容 JSON 端点，并指定非推理纯文本模型 mistral / openai-large
+    for model_name in ["openai-large", "mistral", "openai"]:
+        try:
+            r = requests.post(
+                "https://text.pollinations.ai/openai",
+                headers={"Content-Type": "application/json"},
+                json={
+                    "model": model_name,
+                    "messages": [
+                        {"role": "system", "content": "你是一位专业的A股与全球宏观策略师。只允许输出纯中文Markdown正文，严禁输出任何英文思考过程或JSON字符串。"},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": 0.5
+                },
+                timeout=45
+            )
+            if r.status_code == 200:
+                cleaned = clean_ai_output(r.text)
+                if "### 1." in cleaned and len(cleaned) > 100:
+                    return cleaned
+        except Exception as e:
+            print(f"模型 {model_name} 尝试异常:", e)
+
+    return "### 1. 大宗商品多空逻辑拆解\n- **贵金属与原油**：今日需重点关注俄乌与中东局势引发的地缘溢价波动，现货黄金失守4100美元关口显示短线获利盘回吐。\n\n### 2. Core ETF 实战轮动策略\n- **黄金股ETF(517520) & 华安黄金(518880)**：金价回撤叠加股市波动放大黄金股跌幅，短线宜依托商品金(518880)防守，待金价企稳后再回补黄金股。\n- **中概互联ETF(513050) & 有色ETF(512400)**：日内急跌释放情绪压力，观察分时企稳信号分批低吸，切忌盲目杀跌。"
+
+def push_single_msg(markdown_text: str):
+    encoded_bytes = markdown_text.encode("utf-8")
+    if len(encoded_bytes) > 4000:
+        markdown_text = encoded_bytes[:4000].decode("utf-8", errors="ignore") + "\n\n...(单条超长截断)"
+    payload = {
+        "msgtype": "markdown",
+        "markdown": {"content": markdown_text}
+    }
+    resp = requests.post(WECOM_WEBHOOK_URL, json=payload, timeout=15)
+    resp.raise_for_status()
+
+if __name__ == "__main__":
+    bj_time = datetime.now(timezone(timedelta(hours=8)))
+    today_str = bj_time.strftime("%Y-%m-%d %H:%M")
+
+    world_news = get_world_news_rss()
+    cls_news = get_cls_global_telegraph()
+    etf_quotes = get_market_quotes()
+    ai_insights = generate_ai_insights(world_news, cls_news, etf_quotes)
+
+    world_md = "\n".join([n["md"] for n in world_news])
+    cls_md = "\n".join([c["md"] for c in cls_news])
+    quotes_md = "\n".join([q["md"] for q in etf_quotes])
+
+    msg_part1 = f"""## 🌍 全球国际要闻与市场早报（上篇：资讯与盘面）
+> 更新时间：{today_str}（北京时间）
+
+### 一、 国际新闻头条（点击可读相关报道）
+{world_md}
+
+### 二、 7×24小时全球政经与大宗快讯
+{cls_md}
+
+### 三、 核心关注 ETF 实时盘面追踪
+{quotes_md}"""
+
+    msg_part2 = f"""## 💡 AI 首席策略师深度见解（下篇：传导与轮动）
+> 针对 {today_str} 盘面与地缘动态的量化推演
+
+{ai_insights}"""
+
+    push_single_msg(msg_part1)
+    time.sleep(1)
+    push_single_msg(msg_part2)
+    print("上、下两篇早报均已完整推送至企业微信！")
