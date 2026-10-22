@@ -11,12 +11,11 @@ from datetime import datetime, timezone, timedelta
 WECOM_WEBHOOK_URL = os.environ["WECOM_WEBHOOK_URL"]
 
 def get_world_news_rss() -> list:
-    """源 1：国际政治宏观头条（不设硬性限制，多多益善）"""
+    """源 1：国际政治宏观头条（多多益善）"""
     rss_url = "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx1YlY4U0FtVnVHZ0pWVXlnQVAB?hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
     news_list = []
     try:
         feed = feedparser.parse(rss_url)
-        # 放宽至前 12 条
         for entry in feed.entries[:12]:
             title = entry.title.rsplit(" - ", 1)[0]
             short_q = urllib.parse.quote(title[:22])
@@ -27,12 +26,11 @@ def get_world_news_rss() -> list:
     return news_list
 
 def get_custom_user_rss() -> list:
-    """源 2：专属财经资讯源（不设硬性限制）"""
+    """源 2：专属财经资讯源（多多益善）"""
     custom_rss_url = "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRG9nTDJoMWVtdHNBWGhvWVd4bUv0gAE?hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
     news_list = []
     try:
         feed = feedparser.parse(custom_rss_url)
-        # 放宽至前 12 条
         for entry in feed.entries[:12]:
             title = entry.title.rsplit(" - ", 1)[0]
             short_q = urllib.parse.quote(title[:22])
@@ -73,7 +71,7 @@ def generate_ai_insights(quotes: list, world_news: list, custom_news: list) -> s
     """调用 AI 大模型生成策略，并强力清洗底层 JSON 杂质"""
     quotes_str = " | ".join(quotes)
     all_titles = [n["title"] for n in world_news + custom_news if n.get("title")]
-    news_str = "\n".join(all_titles[:15])  # 传给 AI 前 15 条核心标题作为宏观参考
+    news_str = "\n".join(all_titles[:15])
     
     prompt = f"""最新抓取的全网宏观与财经动态：
 {news_str}
@@ -134,13 +132,13 @@ def generate_ai_insights(quotes: list, world_news: list, custom_news: list) -> s
     return "### 1. 宏观与地缘局势洞察\n- 多空博弈加剧，全球资产价格随消息面高频震荡。\n### 2. 核心 ETF 实战轮动建议\n- 严守仓位纪律，关注核心标的分时支撑与低吸机会。"
 
 def push_msg(text: str):
-    """智能分批推送：若内容超过企业微信字数限制，自动切分多条依次发送"""
-    max_len = 3500  # 企业微信安全字符长度
+    """智能分批推送（带状态码调试）"""
+    max_len = 3500
     if len(text) <= max_len:
         payload = {"msgtype": "markdown", "markdown": {"content": text}}
-        requests.post(WECOM_WEBHOOK_URL, json=payload, timeout=15)
+        resp = requests.post(WECOM_WEBHOOK_URL, json=payload, timeout=15)
+        print(f"企业微信推送响应码: {resp.status_code}, 返回内容: {resp.text}")
     else:
-        # 按行智能切块，保证 Markdown 排版不被拦腰截断
         lines = text.split("\n")
         current_chunk = ""
         part_idx = 1
@@ -148,8 +146,9 @@ def push_msg(text: str):
             if len(current_chunk) + len(line) + 1 > max_len:
                 header_tip = f"📌 **【战情速报（续 {part_idx}）】**\n\n"
                 payload = {"msgtype": "markdown", "markdown": {"content": header_tip + current_chunk}}
-                requests.post(WECOM_WEBHOOK_URL, json=payload, timeout=15)
-                time.sleep(0.8)  # 间隔防频控
+                resp = requests.post(WECOM_WEBHOOK_URL, json=payload, timeout=15)
+                print(f"分批推送 {part_idx} 响应码: {resp.status_code}, 返回内容: {resp.text}")
+                time.sleep(0.8)
                 part_idx += 1
                 current_chunk = line + "\n"
             else:
@@ -157,7 +156,8 @@ def push_msg(text: str):
         if current_chunk:
             header_tip = f"📌 **【战情速报（续 {part_idx}）】**\n\n" if part_idx > 1 else ""
             payload = {"msgtype": "markdown", "markdown": {"content": header_tip + current_chunk}}
-            requests.post(WECOM_WEBHOOK_URL, json=payload, timeout=15)
+            resp = requests.post(WECOM_WEBHOOK_URL, json=payload, timeout=15)
+            print(f"最终分批推送 响应码: {resp.status_code}, 返回内容: {resp.text}")
 
 if __name__ == "__main__":
     bj_time = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M")
