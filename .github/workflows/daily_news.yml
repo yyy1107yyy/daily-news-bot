@@ -1,27 +1,24 @@
-name: Daily International News to WeCom
+name: Market Alert Bot
 
 on:
   schedule:
-    # 每天北京时间早上 08:00 自动运行（对应 UTC 时间 00:00）
-    - cron: '0 0 * * *'
+    # 每天北京时间 8:00 到 22:00，每隔 2 小时自动静默检查一次
+    - cron: '0 0-14/2 * * *'
   workflow_dispatch:
 
 jobs:
-  send-news:
+  check-alert:
     runs-on: ubuntu-latest
     steps:
-      - name: 1. 检出仓库代码
+      - name: 1. 检出代码
         uses: actions/checkout@v4
-
-      - name: 2. 配置云端 Python 环境
+      - name: 2. 配置 Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
-      - name: 3. 安装免Key数据抓取依赖库
-        run: pip install -U requests feedparser akshare pandas
-
-      - name: 4. 抓取新闻与行情并推送到企业微信
+      - name: 3. 安装依赖
+        run: pip install -U requests feedparser akshare
+      - name: 4. 执行异动检查与智能推送
         env:
           WECOM_WEBHOOK_URL: ${{ secrets.WECOM_WEBHOOK_URL }}
         run: python daily_news_wecom.py
