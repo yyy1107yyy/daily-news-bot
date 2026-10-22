@@ -1,4 +1,6 @@
 import os
+import re
+import json
 import time
 import urllib.parse
 import requests
@@ -12,14 +14,13 @@ LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "https://api.groq.com/openai/v1").
 LLM_MODEL = os.environ.get("LLM_MODEL", "llama-3.3-70b-versatile").strip()
 
 def get_world_news_rss() -> list:
-    """获取 Google News 中文国际频道最新头条（使用瘦身短链接防超长）"""
+    """获取 Google News 中文国际频道最新头条"""
     rss_url = "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx1YlY4U0FtVnVHZ0pWVXlnQVAB?hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
     news_list = []
     try:
         feed = feedparser.parse(rss_url)
         for entry in feed.entries[:8]:
             title = entry.title.rsplit(" - ", 1)[0]
-            # 用极简搜索短链替代长达350字节的加密重定向串，既能点击看原文又节省85%字节
             short_q = urllib.parse.quote(title[:22])
             short_link = f"https://www.bing.com/news/search?q={short_q}"
             news_list.append({"title": title, "md": f"- [{title}]({short_link})"})
@@ -50,7 +51,7 @@ def get_cls_global_telegraph() -> list:
     return cls_list
 
 def get_market_quotes() -> list:
-    """使用腾讯财经全球直连协议获取核心 ETF 实时行情"""
+    """使用腾讯财经直连协议获取核心 ETF 实时行情"""
     targets = [
         ("sh513050", "中概互联网ETF", "513050"),
         ("sh517520", "永赢黄金股ETF", "517520"),
@@ -80,14 +81,46 @@ def get_market_quotes() -> list:
         quotes.append({"raw": "", "md": f"- 行情获取异常: {e}"})
     return quotes
 
+def clean_ai_output(raw_text: str) -> str:
+    """清洗 AI 输出：彻底剥离 JSON 包装、英文思考草稿(reasoning)与转义乱码"""
+    text = raw_text.strip()
+    # 1. 如果返回的是 JSON 字符串，优先解析提取 content 字段
+    if text.startswith("{"):
+        try:
+            data = json.loads(text)
+            if "choices" in data and len(data["choices"]) > 0:
+                msg = data["choices"][0].get("message", {})
+                if msg.get("content"):
+                    text = msg["content"]
+            elif data.get("content"):
+                text = data["content"]
+        except Exception:
+            pass
+
+    # 2. 修复被转义的换行符（如 \n 或连续 nn）
+    text = text.replace("\\n", "\n").replace("nn###", "\n\n###").replace("nn-", "\n-")
+
+    # 3. 精准截取从第一个中文三级标题 '### 1.' 开始的内容，扔掉前面的所有英文思考过程
+    match = re.search(r"(###\s*1\..*)", text, flags=re.DOTALL)
+    if match:
+        text = match.group(1)
+
+    # 4. 切除末尾可能出现的英文自言自语（如 Let's adjust...）
+    text = re.split(r"\n*(?:Let's|We need to|Word count|Note:|Char count)", text)[0]
+
+    # 5. 确保标题与列表换行规整
+    text = re.sub(r"\s*(###\s*\d+\.)", r"\n\n\1", text)
+    text = re.sub(r"\s+(-\s+\*\*)", r"\n\1", text)
+    return text.strip()
+
 def generate_ai_insights(world_news: list, cls_news: list, quotes: list) -> str:
-    """调用 AI 大模型生成完整深度见解与 ETF 轮动策略"""
+    """调用大模型生成纯中文深度见解与 ETF 轮动策略"""
     news_context = "\n".join([n["title"] for n in world_news if n["title"]])
     cls_context = "\n".join([c["raw"] for c in cls_news if c["raw"]])
     quotes_context = "\n".join([q["raw"] for q in quotes if q["raw"]])
 
-    prompt = f"""你是一位顶尖的全球宏观与量化ETF策略师（风格敏锐、干练、直击本质，不要任何客套话）。
-请根据以下刚刚抓取到的【今日国际头条】、【全球政经与大宗快讯】和【核心ETF实时盘面】，撰写一份深度早报分析。
+    prompt = f"""请根据以下今日真实抓取的【国际头条】、【全球快讯】和【核心ETF实时盘面】，直接用中文输出一份深度市场早报分析。
+严禁输出任何英文思考过程，直接从 `### 1.` 开始输出中文正文！
 
 【今日国际头条】：
 {news_context}
@@ -98,95 +131,15 @@ def generate_ai_insights(world_news: list, cls_news: list, quotes: list) -> str:
 【核心ETF实时盘面】：
 {quotes_context}
 
-请严格按以下3个模块输出（使用三级标题 `### ` 和无序列表 `- `、加粗 `**`，不要用表格，总字数控制在 500～700 字左右）：
+请严格按以下格式输出（总字数控制在 450～600 中文字之间，严禁使用英文）：
 
 ### 1. 大宗商品（黄金/白银/原油）多空逻辑拆解
-- 结合今日俄乌/中东动态及快讯中的金银油价格异动，深度剖析当前是避险升温还是地缘溢价回吐，并给出关键价格支撑/阻力观察点。
+- **贵金属走势与核心驱动**：（结合俄乌/中东动态及快讯中金银价格异动，指出当前是避险升温还是溢价回吐，给出关键支撑/阻力位）
+- **原油与能源博弈**：（分析中东局势、制裁谈判对国际油价的短线影响）
 
 ### 2. 全球资金流向与A股/港股映射
-- 分析欧美政经动态与大宗商品走势对A股有色金属、国防军工、传统能源及港股科技板块的具体传导逻辑。
+- **顺周期与资源品映射**：（分析对A股黄金股、有色金属、能源化工的传导逻辑）
+- **科技与跨境资金动向**：（结合外盘科技动态与汇率，分析对港股及中概互联网的情绪影响）
 
 ### 3. 核心 ETF 今日实战轮动策略
-- 针对盘面中的 **中概互联网ETF(513050)**、**永赢黄金股ETF(517520)**、**华安黄金ETF(518880)**、**有色金属ETF(512400)** 和 **能源ETF(159930)** 的实时涨跌幅（如大跌是情绪错杀还是趋势破位），逐一给出今日“防守/锁利/低吸/观望”的具体应对建议。"""
-
-    if LLM_API_KEY:
-        try:
-            headers = {"Authorization": f"Bearer {LLM_API_KEY}", "Content-Type": "application/json"}
-            payload = {
-                "model": LLM_MODEL,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.6
-            }
-            r = requests.post(f"{LLM_BASE_URL}/chat/completions", headers=headers, json=payload, timeout=35)
-            r.raise_for_status()
-            return r.json()["choices"][0]["message"]["content"].strip()
-        except Exception as e:
-            print("自定义 LLM 调用失败，切换免Key通道:", e)
-
-    try:
-        r = requests.post(
-            "https://text.pollinations.ai/",
-            json={
-                "messages": [
-                    {"role": "system", "content": "你是一位专业的宏观与A股ETF策略分析师，只用中文简洁输出深度干货。"},
-                    {"role": "user", "content": prompt}
-                ],
-                "model": "openai"
-            },
-            timeout=45
-        )
-        if r.status_code == 200 and len(r.text.strip()) > 30:
-            return r.text.strip()
-    except Exception as e:
-        print("免Key AI通道异常:", e)
-
-    return "- **策略提示**：今日需重点关注俄乌与中东谈判进展引发的黄金、原油地缘溢价波动；黄金股ETF(517520)与中概互联ETF(513050)若出现日内急跌，注意观察分时均线支撑，严格按仓位纪律应对。"
-
-def push_single_msg(markdown_text: str):
-    """发送单条 Markdown 消息（带安全边界保护）"""
-    encoded_bytes = markdown_text.encode("utf-8")
-    if len(encoded_bytes) > 4000:
-        markdown_text = encoded_bytes[:4000].decode("utf-8", errors="ignore") + "\n\n...(单条超长截断)"
-    payload = {
-        "msgtype": "markdown",
-        "markdown": {"content": markdown_text}
-    }
-    resp = requests.post(WECOM_WEBHOOK_URL, json=payload, timeout=15)
-    resp.raise_for_status()
-
-if __name__ == "__main__":
-    bj_time = datetime.now(timezone(timedelta(hours=8)))
-    today_str = bj_time.strftime("%Y-%m-%d %H:%M")
-
-    world_news = get_world_news_rss()
-    cls_news = get_cls_global_telegraph()
-    etf_quotes = get_market_quotes()
-    ai_insights = generate_ai_insights(world_news, cls_news, etf_quotes)
-
-    world_md = "\n".join([n["md"] for n in world_news])
-    cls_md = "\n".join([c["md"] for c in cls_news])
-    quotes_md = "\n".join([q["md"] for q in etf_quotes])
-
-    # 第一条消息：全球要闻 + 7×24快讯 + ETF实时盘面
-    msg_part1 = f"""## 🌍 全球国际要闻与市场早报（上篇：资讯与盘面）
-> 更新时间：{today_str}（北京时间）
-
-### 一、 国际新闻头条（点击可读相关报道）
-{world_md}
-
-### 二、 7×24小时全球政经与大宗快讯
-{cls_md}
-
-### 三、 核心关注 ETF 实时盘面追踪
-{quotes_md}"""
-
-    # 第二条消息：AI 首席策略师深度见解（独立 4096 字节空间，彻底不截断！）
-    msg_part2 = f"""## 💡 AI 首席策略师深度见解（下篇：传导与轮动）
-> 针对 {today_str} 盘面与地缘动态的量化推演
-
-{ai_insights}"""
-
-    push_single_msg(msg_part1)
-    time.sleep(1)  # 间隔1秒发送下篇，确保企业微信里上下顺序整齐
-    push_single_msg(msg_part2)
-    print("上、下两篇早报均已完整推送至企业微信！")
+- **中概互联网ETF (513050)**
