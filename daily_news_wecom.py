@@ -1,56 +1,99 @@
 import os
 import requests
+import feedparser
+import akshare as ak
 from datetime import datetime, timezone, timedelta
-from google import genai
-from google.genai import types
 
-# 直接从 GitHub Secrets 环境变量读取密钥
-GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
+# 只需要企业微信 Webhook 地址，完全不需要大模型 API Key
 WECOM_WEBHOOK_URL = os.environ["WECOM_WEBHOOK_URL"]
 
-def generate_daily_news() -> str:
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    
-    # 开启 Google Search 实时联网搜索
-    grounding_tool = types.Tool(google_search=types.GoogleSearch())
-    config = types.GenerateContentConfig(
-        tools=[grounding_tool],
-        temperature=0.6
-    )
-    
-    # 获取北京时间日期
+def get_world_news_rss() -> list:
+    """从 Google News 中文国际频道 RSS 获取最新国际头条"""
+    rss_url = "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx1YlY4U0FtVnVHZ0pWVXlnQVAB?hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
+    news_list = []
+    try:
+        feed = feedparser.parse(rss_url)
+        for entry in feed.entries[:8]:
+            title = entry.title.rsplit(" - ", 1)[0]  # 清理末尾媒体后缀
+            link = entry.link
+            news_list.append(f"- [{title}]({link})")
+    except Exception as e:
+        news_list.append(f"- 国际RSS获取异常: {e}")
+    return news_list
+
+def get_cls_global_telegraph() -> list:
+    """用 AkShare 获取财联社最新全球财经电报"""
+    cls_list = []
+    try:
+        df = ak.stock_info_global_cls(symbol="全部")
+        # 筛选带有国际、美、欧、俄、中东、黄金、原油等关键词的重磅快讯
+        keywords = ["美", "欧", "俄", "乌", "伊朗", "中东", "原油", "黄金", "美联储", "央行", "GDP", "关税"]
+        count = 0
+        for _, row in df.iterrows():
+            content = str(row.get("内容", ""))
+            title = str(row.get("标题", ""))
+            pub_time = str(row.get("发布时间", ""))[:5]
+            text = title if title and title != "nan" else content
+            if any(k in text for k in keywords) and len(text) > 10:
+                short_text = text[:95] + "..." if len(text) > 95 else text
+                cls_list.append(f"- `{pub_time}` {short_text}")
+                count += 1
+                if count >= 6:
+                    break
+    except Exception as e:
+        cls_list.append(f"- 财联社快讯获取提示: {e}")
+    return cls_list
+
+def get_market_quotes() -> list:
+    """用 AkShare 获取核心 ETF 最新收盘/盘面行情"""
+    quotes = []
+    target_etfs = {
+        "513050": "中概互联网ETF",
+        "517520": "永赢黄金股ETF",
+        "518880": "华安黄金ETF",
+        "512400": "有色金属ETF",
+        "159930": "汇添富能源ETF"
+    }
+    try:
+        df = ak.fund_etf_spot_em()
+        sub = df[df["代码"].isin(target_etfs.keys())]
+        for _, row in sub.iterrows():
+            code = row["代码"]
+            name = target_etfs.get(code, row["名称"])
+            price = row["最新价"]
+            pct = row["涨跌幅"]
+            sign = "🔴" if float(pct) >= 0 else "🟢"
+            quotes.append(f"- {sign} **{name} ({code})**：现价 `{price}` （**{pct}%**）")
+    except Exception as e:
+        quotes.append(f"- 行情接口非交易时段或暂不可用")
+    return quotes
+
+def build_daily_report() -> str:
     bj_time = datetime.now(timezone(timedelta(hours=8)))
-    today_str = bj_time.strftime("%Y-%m-%d")
-    
-    prompt = f"""今天是北京时间 {today_str}。请联网搜集并整理过去24小时的最新国际新闻要闻与市场动态，生成一份企业微信早报。
+    today_str = bj_time.strftime("%Y-%m-%d %H:%M")
 
-请严格包含以下三个模块：
-### 一、 全球核心地缘与政经要闻
-（提炼4-6条欧美俄乌局势、中东动态、亚太及宏观经济核心要闻，每条简明扼要）
+    world_news = "\n".join(get_world_news_rss())
+    cls_news = "\n".join(get_cls_global_telegraph())
+    etf_quotes = "\n".join(get_market_quotes())
 
-### 二、 国际大宗商品最新盘面与传导分析
-（联网查询最新国际原油 WTI/布伦特、现货黄金/白银、铜等最新价格区间，并结合上述新闻简述多空驱动）
+    report = f"""## 🌍 全球国际要闻与市场早报
+> 更新时间：{today_str}（北京时间）
 
-### 三、 A股板块与核心ETF早盘策略参考
-（结合隔夜外盘与大宗商品走势，简评对A股黄金股如517520、中概互联如513050、有色及能源板块的今日操作启示）
+### 一、 国际新闻头条（点击标题可读原文）
+{world_news}
 
-排版要求：
-1. 仅使用二级/三级标题、加粗和无序列表，不要使用Markdown表格（确保企业微信手机端阅读清晰）。
-2. 全文字数控制在 1200 字以内，直接输出早报正文，不要任何寒暄开场白。"""
-    
-    response = client.models.generate_content(
-        model="gemini-3.8-flash",
-        contents=prompt,
-        config=config
-    )
-    return response.text
+### 二、 7×24小时全球政经与大宗快讯
+{cls_news}
+
+### 三、 核心关注 ETF 最新盘面追踪
+{etf_quotes}"""
+    return report
 
 def push_to_wecom(markdown_text: str):
-    # 企业微信 markdown 消息上限为 4096 字节，做安全截断保护
     encoded_bytes = markdown_text.encode("utf-8")
     if len(encoded_bytes) > 4000:
-        markdown_text = encoded_bytes[:4000].decode("utf-8", errors="ignore") + "\n\n...(内容超长已截断)"
-        
+        markdown_text = encoded_bytes[:4000].decode("utf-8", errors="ignore") + "\n\n...(内容已截断)"
+
     payload = {
         "msgtype": "markdown",
         "markdown": {
@@ -59,8 +102,8 @@ def push_to_wecom(markdown_text: str):
     }
     resp = requests.post(WECOM_WEBHOOK_URL, json=payload, timeout=15)
     resp.raise_for_status()
-    print("企业微信推送状态:", resp.json())
+    print("企业微信推送成功:", resp.json())
 
 if __name__ == "__main__":
-    news_brief = generate_daily_news()
-    push_to_wecom(news_brief)
+    report_md = build_daily_report()
+    push_to_wecom(report_md)
