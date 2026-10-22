@@ -1,0 +1,28 @@
+name: Daily International News to WeCom
+
+on:
+  schedule:
+    # 每天北京时间早上 08:00 自动运行（对应 UTC 时间 00:00）
+    - cron: '0 0 * * *'
+  workflow_dispatch: # 开启手动测试按钮
+
+jobs:
+  send-news:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 1. 检出仓库代码
+        uses: actions/checkout@v4
+
+      - name: 2. 配置云端 Python 环境
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 3. 安装依赖库
+        run: pip install -U google-genai requests
+
+      - name: 4. 抓取新闻并推送到企业微信
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          WECOM_WEBHOOK_URL: ${{ secrets.WECOM_WEBHOOK_URL }}
+        run: python daily_news_wecom.py
