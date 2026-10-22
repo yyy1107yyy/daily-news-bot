@@ -2,8 +2,10 @@ name: Market Alert Bot
 
 on:
   schedule:
-    # 每天北京时间 8:00 到 22:00，每隔 2 小时自动静默检查一次
-    - cron: '0 0-14/2 * * *'
+    # 方案保险起见：不仅整点跑，每小时的第 5 分钟也作为一个备用触发，防止 GitHub 丢弃任务
+    - cron: '5 1-15 * * *'
+    # 早上 8:00 定时早报兜底
+    - cron: '0 0 * * *'
   workflow_dispatch:
 
 jobs:
@@ -18,7 +20,7 @@ jobs:
           python-version: '3.11'
       - name: 3. 安装依赖
         run: pip install -U requests feedparser akshare
-      - name: 4. 执行异动检查与智能推送
+      - name: 4. 执行定期战报推送
         env:
           WECOM_WEBHOOK_URL: ${{ secrets.WECOM_WEBHOOK_URL }}
         run: python daily_news_wecom.py
