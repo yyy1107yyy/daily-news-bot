@@ -1,7 +1,6 @@
 import os
 import re
 import json
-import time
 import urllib.parse
 import requests
 import feedparser
@@ -13,45 +12,13 @@ LLM_API_KEY = os.environ.get("LLM_API_KEY", "").strip()
 LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "https://api.groq.com/openai/v1").strip()
 LLM_MODEL = os.environ.get("LLM_MODEL", "llama-3.3-70b-versatile").strip()
 
-def get_world_news_rss() -> list:
-    """获取 Google News 中文国际频道最新头条"""
-    rss_url = "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx1YlY4U0FtVnVHZ0pWVXlnQVAB?hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
-    news_list = []
-    try:
-        feed = feedparser.parse(rss_url)
-        for entry in feed.entries[:8]:
-            title = entry.title.rsplit(" - ", 1)[0]
-            short_q = urllib.parse.quote(title[:22])
-            short_link = f"https://www.bing.com/news/search?q={short_q}"
-            news_list.append({"title": title, "md": f"- [{title}]({short_link})"})
-    except Exception as e:
-        news_list.append({"title": "", "md": f"- 国际RSS获取异常: {e}"})
-    return news_list
-
-def get_cls_global_telegraph() -> list:
-    """获取财联社最新全球政经与大宗快讯"""
-    cls_list = []
-    try:
-        df = ak.stock_info_global_cls(symbol="全部")
-        keywords = ["美", "欧", "俄", "乌", "伊朗", "中东", "原油", "黄金", "白银", "铜", "美联储", "央行", "GDP", "关税", "A股", "港股"]
-        count = 0
-        for _, row in df.iterrows():
-            content = str(row.get("内容", ""))
-            title = str(row.get("标题", ""))
-            pub_time = str(row.get("发布时间", ""))[:5]
-            text = title if title and title != "nan" else content
-            if any(k in text for k in keywords) and len(text) > 10:
-                short_text = text[:90] + "..." if len(text) > 90 else text
-                cls_list.append({"raw": short_text, "md": f"- `{pub_time}` {short_text}"})
-                count += 1
-                if count >= 6:
-                    break
-    except Exception as e:
-        cls_list.append({"raw": "", "md": f"- 财联社快讯获取提示: {e}"})
-    return cls_list
-
-def get_market_quotes() -> list:
-    """使用腾讯财经直连协议获取核心 ETF 实时行情"""
+def check_market_and_news() -> tuple:
+    """核心巡检：检查 ETF 波动率和突发地缘新闻关键词"""
+    triggered = False
+    trigger_reason = []
+    
+    # 1. 检查行情异动（任一 ETF 涨跌幅绝对值 >= 1.5% 即触发）
+    quotes = []
     targets = [
         ("sh513050", "中概互联网ETF", "513050"),
         ("sh517520", "永赢黄金股ETF", "517520"),
@@ -59,174 +26,105 @@ def get_market_quotes() -> list:
         ("sh512400", "有色金属ETF", "512400"),
         ("sz159930", "汇添富能源ETF", "159930")
     ]
-    quotes = []
     try:
         codes_str = ",".join([t[0] for t in targets])
         url = f"http://qt.gtimg.cn/q={codes_str}"
         resp = requests.get(url, timeout=10)
         resp.encoding = "gbk"
-        lines = resp.text.strip().split(";")
-        for line, (_, name, code) in zip(lines, targets):
+        for line, (_, name, code) in zip(resp.text.strip().split(";"), targets):
             parts = line.split("~")
             if len(parts) > 32:
                 price = parts[3]
                 pct = float(parts[32])
                 sign = "🔴" if pct >= 0 else "🟢"
                 pct_str = f"+{pct:.2f}%" if pct >= 0 else f"{pct:.2f}%"
-                quotes.append({
-                    "raw": f"{name}({code}) 现价:{price} 涨跌:{pct_str}",
-                    "md": f"- {sign} **{name} ({code})**：现价 `{price}` （**{pct_str}**）"
-                })
+                quotes.append(f"- {sign} **{name} ({code})**：现价 `{price}` （**{pct_str}**）")
+                
+                # 异动阈值判断：绝对值 >= 1.5%
+                if abs(pct) >= 1.5:
+                    triggered = True
+                    trigger_reason.append(f"核心资产 {name} 盘中异动达 {pct_str}")
     except Exception as e:
-        quotes.append({"raw": "", "md": f"- 行情获取异常: {e}"})
-    return quotes
+        quotes.append(f"- 行情获取异常: {e}")
 
-def clean_ai_output(raw_text: str) -> str:
-    """清洗 AI 输出：彻底剥离 JSON 包装、英文思考草稿(reasoning)与转义乱码"""
-    text = raw_text.strip()
-    # 1. 如果返回的是 JSON 字符串，优先解析提取 content 字段
-    if text.startswith("{"):
-        try:
-            data = json.loads(text)
-            if "choices" in data and len(data["choices"]) > 0:
-                msg = data["choices"][0].get("message", {})
-                if msg.get("content"):
-                    text = msg["content"]
-            elif data.get("content"):
-                text = data["content"]
-        except Exception:
-            pass
+    # 2. 检查突发新闻关键词
+    rss_url = "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx1YlY4U0FtVnVHZ0pWVXlnQVAB?hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
+    news_list = []
+    urgent_keywords = ["突发", "战争", "空袭", "制裁", "袭击", "降息", "加息", "破位", "暴跌", "暴涨", "会谈", "协议"]
+    
+    try:
+        feed = feedparser.parse(rss_url)
+        for entry in feed.entries[:6]:
+            title = entry.title.rsplit(" - ", 1)[0]
+            short_q = urllib.parse.quote(title[:22])
+            short_link = f"https://www.bing.com/news/search?q={short_q}"
+            news_list.append(f"- [{title}]({short_link})")
+            
+            # 如果新闻标题命中突发关键词，直接触发提醒
+            if any(k in title for k in urgent_keywords):
+                triggered = True
+                trigger_reason.append(f"捕捉到突发头条: {title}")
+    except Exception as e:
+        news_list.append(f"- 国际RSS获取异常: {e}")
 
-    # 2. 修复被转义的换行符（如 \n 或连续 nn）
-    text = text.replace("\\n", "\n").replace("nn###", "\n\n###").replace("nn-", "\n-")
+    # 【注】如果你希望平时早上 8 点那次雷打不动强制发送，可以把下面这行强制设为 True 或增加时间判断
+    # 目前默认：只要有异动或突发新闻就发，平时风平浪静则静默跳过。
+    # 为了防止你错过每日早报，我们也可以设定：北京时间早上 8:00 (UTC 0点) 强制触发一次，其余时间按异动触发！
+    bj_hour = datetime.now(timezone(timedelta(hours=8))).hour
+    if bj_hour == 8:
+        triggered = True
+        trigger_reason.append("定时早报例行推送")
 
-    # 3. 精准截取从第一个中文三级标题 '### 1.' 开始的内容，扔掉前面的所有英文思考过程
-    match = re.search(r"(###\s*1\..*)", text, flags=re.DOTALL)
-    if match:
-        text = match.group(1)
+    return triggered, trigger_reason, news_list, quotes
 
-    # 4. 切除末尾可能出现的英文自言自语（如 Let's adjust...）
-    text = re.split(r"\n*(?:Let's|We need to|Word count|Note:|Char count)", text)[0]
+def generate_ai_insights(reasons: list, quotes: list) -> str:
+    prompt = f"""当前触发监控警报的原因：{", ".join(reasons)}
+核心ETF实时盘面：{" | ".join(quotes)}
 
-    # 5. 确保标题与列表换行规整
-    text = re.sub(r"\s*(###\s*\d+\.)", r"\n\n\1", text)
-    text = re.sub(r"\s+(-\s+\*\*)", r"\n\1", text)
-    return text.strip()
+请作为顶尖宏观策略师，直接用中文输出一份 300 字左右的精炼异动点评与应对策略（严禁任何英文草稿，从 `### 1.` 开始）：
+### 1. 异动核心原因诊断
+- （一针见血分析触发本次警报的宏观或地缘根源）
+### 2. ETF 实战应对纪律
+- （针对中概、黄金、有色、能源给出明确的防守或进攻操作建议）"""
 
-def generate_ai_insights(world_news: list, cls_news: list, quotes: list) -> str:
-    """调用大模型生成纯中文深度见解与 ETF 轮动策略"""
-    news_context = "\n".join([n["title"] for n in world_news if n["title"]])
-    cls_context = "\n".join([c["raw"] for c in cls_news if c["raw"]])
-    quotes_context = "\n".join([q["raw"] for q in quotes if q["raw"]])
-
-    prompt = f"""请根据以下今日真实抓取的【国际头条】、【全球快讯】和【核心ETF实时盘面】，直接用中文输出一份深度市场早报分析。
-严禁输出任何英文思考过程，直接从 `### 1.` 开始输出中文正文！
-
-【今日国际头条】：
-{news_context}
-
-【全球政经与大宗快讯】：
-{cls_context}
-
-【核心ETF实时盘面】：
-{quotes_context}
-
-请严格按以下格式输出（总字数控制在 450～600 中文字之间，严禁使用英文）：
-
-### 1. 大宗商品（黄金/白银/原油）多空逻辑拆解
-- **贵金属走势与核心驱动**：（结合俄乌/中东动态及快讯中金银价格异动，指出当前是避险升温还是溢价回吐，给出关键支撑/阻力位）
-- **原油与能源博弈**：（分析中东局势、制裁谈判对国际油价的短线影响）
-
-### 2. 全球资金流向与A股/港股映射
-- **顺周期与资源品映射**：（分析对A股黄金股、有色金属、能源化工的传导逻辑）
-- **科技与跨境资金动向**：（结合外盘科技动态与汇率，分析对港股及中概互联网的情绪影响）
-
-### 3. 核心 ETF 今日实战轮动策略
-- **中概互联网ETF (513050)**：（结合实时涨跌幅给出“低吸/观望/防守”建议）
-- **永赢黄金股ETF (517520) & 华安黄金ETF (518880)**：（对比两者跌幅差异，给出套利或锁利建议）
-- **有色金属ETF (512400) & 能源ETF (159930)**：（给出今日波段操作建议）"""
-
-    if LLM_API_KEY:
-        try:
-            headers = {"Authorization": f"Bearer {LLM_API_KEY}", "Content-Type": "application/json"}
-            payload = {
-                "model": LLM_MODEL,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.5
-            }
-            r = requests.post(f"{LLM_BASE_URL}/chat/completions", headers=headers, json=payload, timeout=35)
-            r.raise_for_status()
-            return clean_ai_output(r.json()["choices"][0]["message"]["content"])
-        except Exception as e:
-            print("自定义 LLM 调用失败，切换免Key通道:", e)
-
-    # 使用 Pollinations 标准 OpenAI 兼容 JSON 端点，并指定非推理纯文本模型 mistral / openai-large
     for model_name in ["openai-large", "mistral", "openai"]:
         try:
             r = requests.post(
                 "https://text.pollinations.ai/openai",
-                headers={"Content-Type": "application/json"},
                 json={
                     "model": model_name,
-                    "messages": [
-                        {"role": "system", "content": "你是一位专业的A股与全球宏观策略师。只允许输出纯中文Markdown正文，严禁输出任何英文思考过程或JSON字符串。"},
-                        {"role": "user", "content": prompt}
-                    ],
+                    "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0.5
                 },
-                timeout=45
+                timeout=35
             )
-            if r.status_code == 200:
-                cleaned = clean_ai_output(r.text)
-                if "### 1." in cleaned and len(cleaned) > 100:
-                    return cleaned
-        except Exception as e:
-            print(f"模型 {model_name} 尝试异常:", e)
+            if r.status_code == 200 and "### 1." in r.text:
+                return r.text.strip()
+        except Exception:
+            pass
+    return "### 1. 异动诊断\n- 盘面波动加剧，地缘与宏观预期交织。\n### 2. 应对策略\n- 严格执行仓位纪律，避免盲目追涨杀跌。"
 
-    return "### 1. 大宗商品多空逻辑拆解\n- **贵金属与原油**：今日需重点关注俄乌与中东局势引发的地缘溢价波动，现货黄金失守4100美元关口显示短线获利盘回吐。\n\n### 2. Core ETF 实战轮动策略\n- **黄金股ETF(517520) & 华安黄金(518880)**：金价回撤叠加股市波动放大黄金股跌幅，短线宜依托商品金(518880)防守，待金价企稳后再回补黄金股。\n- **中概互联ETF(513050) & 有色ETF(512400)**：日内急跌释放情绪压力，观察分时企稳信号分批低吸，切忌盲目杀跌。"
-
-def push_single_msg(markdown_text: str):
-    encoded_bytes = markdown_text.encode("utf-8")
-    if len(encoded_bytes) > 4000:
-        markdown_text = encoded_bytes[:4000].decode("utf-8", errors="ignore") + "\n\n...(单条超长截断)"
-    payload = {
-        "msgtype": "markdown",
-        "markdown": {"content": markdown_text}
-    }
-    resp = requests.post(WECOM_WEBHOOK_URL, json=payload, timeout=15)
-    resp.raise_for_status()
+def push_msg(text: str):
+    payload = {"msgtype": "markdown", "markdown": {"content": text[:4000]}}
+    requests.post(WECOM_WEBHOOK_URL, json=payload, timeout=15)
 
 if __name__ == "__main__":
-    bj_time = datetime.now(timezone(timedelta(hours=8)))
-    today_str = bj_time.strftime("%Y-%m-%d %H:%M")
+    triggered, reasons, news, quotes = check_market_and_news()
+    
+    if triggered:
+        bj_time = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M")
+        reason_str = " | ".join(reasons)
+        
+        msg = f"""🚨 **【宏观与盘面异动警报】**
+> 触发时间：{bj_time} | 触发事由：{reason_str}
 
-    world_news = get_world_news_rss()
-    cls_news = get_cls_global_telegraph()
-    etf_quotes = get_market_quotes()
-    ai_insights = generate_ai_insights(world_news, cls_news, etf_quotes)
+### 一、 核心关注 ETF 实时盘面
+{"\n".join(quotes)}
 
-    world_md = "\n".join([n["md"] for n in world_news])
-    cls_md = "\n".join([c["md"] for c in cls_news])
-    quotes_md = "\n".join([q["md"] for q in etf_quotes])
-
-    msg_part1 = f"""## 🌍 全球国际要闻与市场早报（上篇：资讯与盘面）
-> 更新时间：{today_str}（北京时间）
-
-### 一、 国际新闻头条（点击可读相关报道）
-{world_md}
-
-### 二、 7×24小时全球政经与大宗快讯
-{cls_md}
-
-### 三、 核心关注 ETF 实时盘面追踪
-{quotes_md}"""
-
-    msg_part2 = f"""## 💡 AI 首席策略师深度见解（下篇：传导与轮动）
-> 针对 {today_str} 盘面与地缘动态的量化推演
-
-{ai_insights}"""
-
-    push_single_msg(msg_part1)
-    time.sleep(1)
-    push_single_msg(msg_part2)
-    print("上、下两篇早报均已完整推送至企业微信！")
+### 二、 💡 首席策略师异动点评
+{generate_ai_insights(reasons, quotes)}"""
+        
+        push_msg(msg)
+        print("检测到异动，已成功推送警报！")
+    else:
+        print("当前市场平稳，未达到异动阈值，保持静默。")
