@@ -39,7 +39,7 @@ def generate_daily_news() -> str:
 2. 全文字数控制在 1200 字以内，直接输出早报正文，不要任何寒暄开场白。"""
     
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-3.8-flash",
         contents=prompt,
         config=config
     )
