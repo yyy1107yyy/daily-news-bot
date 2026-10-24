@@ -9,6 +9,13 @@ from datetime import datetime, timezone, timedelta
 
 WECOM_WEBHOOK_URL = os.environ["WECOM_WEBHOOK_URL"]
 
+def build_news_link(raw_title: str) -> str:
+    """生成100%不跳首页、直接精准定位该新闻报道的链接"""
+    # 去除特殊标点，保留核心关键词以防链接截断
+    clean_kw = re.sub(r"[^\w\u4e00-\u9fa5]+", " ", raw_title).strip()
+    encoded_kw = urllib.parse.quote(clean_kw[:24])
+    return f"https://www.baidu.com/s?wd={encoded_kw}"
+
 def get_world_news_rss() -> list:
     """源 1：国际政治宏观头条"""
     rss_url = "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx1YlY4U0FtVnVHZ0pWVXlnQVAB?hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
@@ -17,26 +24,27 @@ def get_world_news_rss() -> list:
         feed = feedparser.parse(rss_url)
         for entry in feed.entries[:8]:
             raw_title = entry.title.rsplit(" - ", 1)[0]
-            show_title = raw_title[:28] + "..." if len(raw_title) > 30 else raw_title
-            short_q = urllib.parse.quote(raw_title[:10])
-            short_link = f"https://cn.bing.com/news/search?q={short_q}"
-            news_list.append({"title": raw_title, "md": f"- [{show_title}]({short_link})"})
+            # 替换掉可能破坏 Markdown 语法的方括号
+            safe_title = raw_title.replace("[", "【").replace("]", "】")
+            show_title = safe_title[:28] + "..." if len(safe_title) > 30 else safe_title
+            link = build_news_link(raw_title)
+            news_list.append({"title": raw_title, "md": f"- [{show_title}]({link})"})
     except Exception:
         pass
     return news_list
 
 def get_custom_user_rss() -> list:
-    """源 2：专属财经/黄金/能源/宏观动态 RSS（已修复为空的问题）"""
+    """源 2：专属财经/黄金/能源/宏观动态 RSS"""
     custom_rss_url = "https://news.google.com/rss/search?q=%E8%B4%A2%E7%BB%8F+OR+%E9%BB%84%E9%87%91+OR+%E5%8E%9F%E6%B2%B9+OR+%E7%BE%8E%E8%81%94%E5%82%A8+OR+A%E8%82%A1&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
     news_list = []
     try:
         feed = feedparser.parse(custom_rss_url)
         for entry in feed.entries[:6]:
             raw_title = entry.title.rsplit(" - ", 1)[0]
-            show_title = raw_title[:28] + "..." if len(raw_title) > 30 else raw_title
-            short_q = urllib.parse.quote(raw_title[:10])
-            short_link = f"https://cn.bing.com/news/search?q={short_q}"
-            news_list.append({"title": raw_title, "md": f"- 🎯 [{show_title}]({short_link})"})
+            safe_title = raw_title.replace("[", "【").replace("]", "】")
+            show_title = safe_title[:28] + "..." if len(safe_title) > 30 else safe_title
+            link = build_news_link(raw_title)
+            news_list.append({"title": raw_title, "md": f"- 🎯 [{show_title}]({link})"})
     except Exception:
         pass
     return news_list
@@ -69,7 +77,7 @@ def get_market_quotes() -> list:
     return quotes
 
 def generate_ai_insights(quotes: list, world_news: list, custom_news: list) -> str:
-    """调用 AI 生成深度策略（标准 JSON 解析 + 多重快速重试，绝不误杀正常回复）"""
+    """调用 AI 生成深度策略（标准 JSON 解析 + 多重快速重试）"""
     quotes_str = " | ".join(quotes)
     all_titles = [n["title"] for n in world_news + custom_news if n.get("title")]
     news_str = "\n".join([f"- {t}" for t in all_titles[:14]])
@@ -85,7 +93,6 @@ def generate_ai_insights(quotes: list, world_news: list, custom_news: list) -> s
 **2. 核心 ETF 实战应对策略**
 （分别针对中概513050、黄金517520/518880、有色512400、能源159930给出具体操作建议）"""
 
-    # 通道 1：使用响应最快的标准接口轮询重试 3 次
     for attempt in range(3):
         try:
             r = requests.post(
@@ -110,7 +117,6 @@ def generate_ai_insights(quotes: list, world_news: list, custom_news: list) -> s
                     content = r.text
                 
                 content = content.strip()
-                # 如果还是带了未解析的 JSON 外壳，做二次提取
                 if '{"choices":' in content or '"reasoning":' in content:
                     m = re.search(r'"content"\s*:\s*"(.*?)"\s*,\s*"(?:reasoning|tool_calls|refusal)"', content, re.DOTALL)
                     if m:
@@ -122,7 +128,6 @@ def generate_ai_insights(quotes: list, world_news: list, custom_news: list) -> s
             print(f"主通道第 {attempt+1} 次尝试异常: {e}")
             time.sleep(2)
 
-    # 通道 2：极速纯文本备用通道
     try:
         r2 = requests.post(
             "https://text.pollinations.ai/",
@@ -174,11 +179,9 @@ if __name__ == "__main__":
 ### 四、 💡 首席策略师点评
 {ai_text}"""
 
-    # 企业微信单条 Markdown 限制为 4096 字节（UTF-8）
     if len(full_msg.encode("utf-8")) <= 3950:
         send_wecom_md(full_msg)
     else:
-        # 若内容极多超出单条字节上限，优雅分为“资讯盘面卡”与“AI策略卡”两张完整卡片推送
         part1_msg = f"""🌍 **【宏观战情定期速报（上：资讯与盘面）】**
 > 更新时间：{bj_time}
 
