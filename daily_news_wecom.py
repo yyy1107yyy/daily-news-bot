@@ -10,10 +10,10 @@ from datetime import datetime, timezone, timedelta
 WECOM_WEBHOOK_URL = os.environ["WECOM_WEBHOOK_URL"]
 
 def build_news_link(raw_title: str) -> str:
-    """生成100%不跳首页、直接精准定位该新闻报道的链接"""
-    # 去除特殊标点，保留核心关键词以防链接截断
-    clean_kw = re.sub(r"[^\w\u4e00-\u9fa5]+", " ", raw_title).strip()
-    encoded_kw = urllib.parse.quote(clean_kw[:24])
+    """生成极简百度直达链接（严格控制字节长度，防止撑爆企业微信4096字节上限）"""
+    # 只保留纯汉字、字母和数字，绝不留空格，取前12个核心字即可精准定位新闻
+    clean_kw = re.sub(r"[^\w\u4e00-\u9fa5]", "", raw_title)[:12]
+    encoded_kw = urllib.parse.quote(clean_kw)
     return f"https://www.baidu.com/s?wd={encoded_kw}"
 
 def get_world_news_rss() -> list:
@@ -24,9 +24,8 @@ def get_world_news_rss() -> list:
         feed = feedparser.parse(rss_url)
         for entry in feed.entries[:8]:
             raw_title = entry.title.rsplit(" - ", 1)[0]
-            # 替换掉可能破坏 Markdown 语法的方括号
             safe_title = raw_title.replace("[", "【").replace("]", "】")
-            show_title = safe_title[:28] + "..." if len(safe_title) > 30 else safe_title
+            show_title = safe_title[:26] + "..." if len(safe_title) > 28 else safe_title
             link = build_news_link(raw_title)
             news_list.append({"title": raw_title, "md": f"- [{show_title}]({link})"})
     except Exception:
@@ -42,7 +41,7 @@ def get_custom_user_rss() -> list:
         for entry in feed.entries[:6]:
             raw_title = entry.title.rsplit(" - ", 1)[0]
             safe_title = raw_title.replace("[", "【").replace("]", "】")
-            show_title = safe_title[:28] + "..." if len(safe_title) > 30 else safe_title
+            show_title = safe_title[:26] + "..." if len(safe_title) > 28 else safe_title
             link = build_news_link(raw_title)
             news_list.append({"title": raw_title, "md": f"- 🎯 [{show_title}]({link})"})
     except Exception:
@@ -77,7 +76,7 @@ def get_market_quotes() -> list:
     return quotes
 
 def generate_ai_insights(quotes: list, world_news: list, custom_news: list) -> str:
-    """调用 AI 生成深度策略（标准 JSON 解析 + 多重快速重试）"""
+    """调用 AI 生成深度策略（严禁画表格，确保企业微信排版整洁）"""
     quotes_str = " | ".join(quotes)
     all_titles = [n["title"] for n in world_news + custom_news if n.get("title")]
     news_str = "\n".join([f"- {t}" for t in all_titles[:14]])
@@ -87,11 +86,14 @@ def generate_ai_insights(quotes: list, world_news: list, custom_news: list) -> s
 
 核心ETF盘面：{quotes_str}
 
-请作为首席宏观策略师，直接用中文输出一份 300 字左右的深度点评与实战操作建议，分为以下两部分：
+请作为首席宏观策略师，直接用中文输出一份 280 字左右的精炼点评与实战建议，分为以下两部分（注意：严禁使用 Markdown 表格 `|`，全部使用 `- ` 无序列表）：
 **1. 核心地缘与宏观洞察**
-（结合上述新闻分析当前地缘冲突、通胀或资金情绪演变）
+- （结合上述新闻一针见血分析地缘、通胀或资金情绪）
 **2. 核心 ETF 实战应对策略**
-（分别针对中概513050、黄金517520/518880、有色512400、能源159930给出具体操作建议）"""
+- **中概互联网 (513050)**：（给出具体操作与止盈止损建议）
+- **黄金板块 (517520/518880)**：（给出具体操作建议）
+- **有色金属 (512400)**：（给出具体操作建议）
+- **能源ETF (159930)**：（给出具体操作建议）"""
 
     for attempt in range(3):
         try:
@@ -100,7 +102,7 @@ def generate_ai_insights(quotes: list, world_news: list, custom_news: list) -> s
                 json={
                     "model": "openai",
                     "messages": [
-                        {"role": "system", "content": "你是一位专业的宏观与ETF实战策略师，只输出纯中文Markdown正文，不要输出任何英文思考过程。"},
+                        {"role": "system", "content": "你是一位专业的宏观与ETF实战策略师，只输出纯中文列表格式正文，严禁使用Markdown表格，不要输出任何英文思考过程。"},
                         {"role": "user", "content": prompt}
                     ],
                     "temperature": 0.6
@@ -128,29 +130,34 @@ def generate_ai_insights(quotes: list, world_news: list, custom_news: list) -> s
             print(f"主通道第 {attempt+1} 次尝试异常: {e}")
             time.sleep(2)
 
-    try:
-        r2 = requests.post(
-            "https://text.pollinations.ai/",
-            json={
-                "messages": [
-                    {"role": "system", "content": "你是专业宏观策略师，只输出中文。"},
-                    {"role": "user", "content": prompt}
-                ],
-                "model": "openai"
-            },
-            timeout=30
-        )
-        if r2.status_code == 200 and len(r2.text.strip()) > 50:
-            return r2.text.strip()
-    except Exception:
-        pass
-
     return "**1. 核心地缘与宏观洞察**\n- 当前国际地缘风险持续发酵，市场避险情绪升温，资金在风险资产与避险板块间高频博弈。\n**2. 核心 ETF 实战应对策略**\n- **中概与有色**：短线承压，严控仓位耐心等待企稳信号。\n- **黄金与能源**：受益于地缘溢价支撑，逢回调可关注分批配置机会。"
 
 def send_wecom_md(content: str):
-    payload = {"msgtype": "markdown", "markdown": {"content": content}}
-    resp = requests.post(WECOM_WEBHOOK_URL, json=payload, timeout=15)
-    print(f"推送状态: {resp.status_code}, 响应: {resp.text}")
+    """带字节级安全切割的推送函数，确保任何一部分都绝不因为超4096字节被吞"""
+    max_bytes = 3800
+    encoded = content.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        payload = {"msgtype": "markdown", "markdown": {"content": content}}
+        resp = requests.post(WECOM_WEBHOOK_URL, json=payload, timeout=15)
+        print(f"单条推送状态: {resp.status_code}, 字节数: {len(encoded)}, 响应: {resp.text}")
+    else:
+        lines = content.split("\n")
+        chunk = ""
+        part = 1
+        for line in lines:
+            if len((chunk + line + "\n").encode("utf-8")) > max_bytes:
+                payload = {"msgtype": "markdown", "markdown": {"content": chunk.strip()}}
+                resp = requests.post(WECOM_WEBHOOK_URL, json=payload, timeout=15)
+                print(f"分段 {part} 推送状态: {resp.status_code}, 响应: {resp.text}")
+                time.sleep(1)
+                part += 1
+                chunk = f"📌 **【宏观战情速报（续 {part}）】**\n" + line + "\n"
+            else:
+                chunk += line + "\n"
+        if chunk.strip():
+            payload = {"msgtype": "markdown", "markdown": {"content": chunk.strip()}}
+            resp = requests.post(WECOM_WEBHOOK_URL, json=payload, timeout=15)
+            print(f"分段 {part} 推送状态: {resp.status_code}, 响应: {resp.text}")
 
 if __name__ == "__main__":
     bj_time = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M")
@@ -179,25 +186,4 @@ if __name__ == "__main__":
 ### 四、 💡 首席策略师点评
 {ai_text}"""
 
-    if len(full_msg.encode("utf-8")) <= 3950:
-        send_wecom_md(full_msg)
-    else:
-        part1_msg = f"""🌍 **【宏观战情定期速报（上：资讯与盘面）】**
-> 更新时间：{bj_time}
-
-### 一、 国际政治宏观头条
-{world_md}
-
-### 二、 🎯 专属财经订阅动态
-{custom_md}
-
-### 三、 核心关注 ETF 盘面
-{quotes_md}"""
-
-        part2_msg = f"""💡 **【宏观战情定期速报（下：首席策略师点评）】**
-> 更新时间：{bj_time}
-
-{ai_text}"""
-        send_wecom_md(part1_msg)
-        time.sleep(1)
-        send_wecom_md(part2_msg)
+    send_wecom_md(full_msg)
