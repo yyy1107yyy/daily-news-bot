@@ -1,10 +1,7 @@
 name: Market Alert Bot
 
 on:
-  schedule:
-    # 错峰设定在每小时的 23 分执行（UTC 0点-15点 对应 北京时间 8:23 - 23:23）
-    # 避开全球整点排队高峰，大幅减少延迟和漏发
-    - cron: '23 0-15 * * *'
+  # 仅保留外部 API 触发与手动触发，彻底关闭 GitHub 内置随缘定时
   workflow_dispatch:
 
 jobs:
@@ -13,12 +10,15 @@ jobs:
     steps:
       - name: 1. 检出代码
         uses: actions/checkout@v4
+
       - name: 2. 配置 Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
       - name: 3. 安装依赖
-        run: pip install -U requests feedparser akshare
+        run: pip install -U requests feedparser
+
       - name: 4. 执行定期战报推送
         env:
           WECOM_WEBHOOK_URL: ${{ secrets.WECOM_WEBHOOK_URL }}
