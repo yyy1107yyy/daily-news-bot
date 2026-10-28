@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>持仓解套与日内做T量化驾驶舱</title>
+  <title>持仓解套与分档做T量化驾驶舱</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -25,7 +25,7 @@
       line-height: 1.5;
     }
     .header {
-      max-width: 1280px;
+      max-width: 1320px;
       margin: 0 auto 16px;
       display: flex;
       flex-wrap: wrap;
@@ -37,8 +37,9 @@
       border-radius: 12px;
       border: 1px solid var(--border);
     }
-    .header h1 { font-size: 1.25rem; display: flex; align-items: center; gap: 8px; }
-    .controls { display: flex; align-items: center; gap: 12px; font-size: 0.88rem; color: var(--muted); }
+    .header h1 { font-size: 1.2rem; display: flex; align-items: center; gap: 8px; }
+    .sub-tip { font-size: 0.8rem; color: #38bdf8; margin-top: 2px; }
+    .controls { display: flex; align-items: center; gap: 12px; font-size: 0.85rem; color: var(--muted); }
     button {
       background: var(--accent);
       color: #fff;
@@ -51,10 +52,10 @@
     }
     button:hover { opacity: 0.9; }
     .grid {
-      max-width: 1280px;
+      max-width: 1320px;
       margin: 0 auto;
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
       gap: 16px;
     }
     .card {
@@ -64,8 +65,7 @@
       padding: 16px;
       display: flex;
       flex-direction: column;
-      gap: 12px;
-      position: relative;
+      gap: 11px;
     }
     .card.trapped { border-top: 3px solid var(--warn); }
     .top-row { display: flex; justify-content: space-between; align-items: flex-start; }
@@ -78,7 +78,7 @@
       color: var(--warn);
       font-weight: 600;
     }
-    .code { color: var(--muted); font-size: 0.82rem; font-family: monospace; }
+    .code { color: var(--muted); font-size: 0.8rem; font-family: monospace; margin-top: 2px; }
     .price-box { text-align: right; }
     .price { font-size: 1.55rem; font-weight: 700; font-family: monospace; }
     .pct { font-size: 0.9rem; font-weight: 600; font-family: monospace; }
@@ -86,37 +86,61 @@
     .down { color: var(--down); }
 
     .signal-bar {
-      padding: 8px 12px;
+      padding: 7px 11px;
       border-radius: 8px;
-      font-size: 0.84rem;
+      font-size: 0.82rem;
       font-weight: 600;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
       background: rgba(59, 130, 246, 0.12);
       border: 1px solid rgba(59, 130, 246, 0.3);
     }
 
+    .tier-section-title {
+      font-size: 0.75rem;
+      color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: -4px;
+    }
+
     .levels-grid {
       display: grid;
-      grid-template-columns: repeat(5, 1fr);
+      grid-template-columns: repeat(3, 1fr);
       gap: 6px;
-      background: rgba(15, 23, 42, 0.6);
-      padding: 10px 8px;
-      border-radius: 8px;
       text-align: center;
     }
-    .lvl-item { display: flex; flex-direction: column; gap: 2px; }
-    .lvl-label { font-size: 0.72rem; color: var(--muted); }
-    .lvl-val { font-size: 0.92rem; font-weight: 700; font-family: monospace; }
-    .lvl-r2, .lvl-r1 { color: #f87171; }
-    .lvl-p { color: #fbbf24; }
-    .lvl-s1, .lvl-s2 { color: #34d399; }
+    .lvl-item {
+      background: rgba(15, 23, 42, 0.65);
+      border: 1px solid transparent;
+      padding: 7px 6px;
+      border-radius: 7px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .lvl-item:hover { border-color: #64748b; }
+    .lvl-item.active-buy {
+      border-color: #10b981;
+      background: rgba(16, 185, 129, 0.15);
+    }
+    .lvl-item.active-sell {
+      border-color: #ef4444;
+      background: rgba(239, 68, 68, 0.15);
+    }
+    .lvl-label { font-size: 0.72rem; color: #cbd5e1; font-weight: 600; }
+    .lvl-sub { font-size: 0.65rem; color: var(--muted); }
+    .lvl-val { font-size: 0.96rem; font-weight: 700; font-family: monospace; margin-top: 1px; }
+    .c-buy { color: #34d399; }
+    .c-sell { color: #f87171; }
+    .c-vwap { color: #fbbf24; }
 
     .ma-row {
       display: flex;
       justify-content: space-between;
-      font-size: 0.78rem;
+      flex-wrap: wrap;
+      gap: 4px;
+      font-size: 0.76rem;
       color: var(--muted);
       background: rgba(15, 23, 42, 0.35);
       padding: 6px 10px;
@@ -126,7 +150,7 @@
 
     .calc-box {
       border-top: 1px dashed var(--border);
-      padding-top: 10px;
+      padding-top: 9px;
       display: flex;
       flex-direction: column;
       gap: 8px;
@@ -144,13 +168,13 @@
       color: var(--text);
       padding: 5px 8px;
       border-radius: 5px;
-      font-size: 0.85rem;
+      font-size: 0.84rem;
       font-family: monospace;
       width: 100%;
     }
     .calc-result {
       font-size: 0.8rem;
-      color: #cbd5e1;
+      color: #e2e8f0;
       background: rgba(16, 185, 129, 0.08);
       border: 1px solid rgba(16, 185, 129, 0.25);
       padding: 8px 10px;
@@ -167,7 +191,10 @@
 <body>
 
   <div class="header">
-    <h1>🎯 持仓解套与日内做T量化驾驶舱</h1>
+    <div>
+      <h1>🎯 持仓解套与分档做T量化驾驶舱</h1>
+      <div class="sub-tip">💡 提示：点击卡片上的【一档/二档/三档】格子，可自由切换不同档位测算做T降本金额</div>
+    </div>
     <div class="controls">
       <span id="update-time">正在同步真实日K线与实时盘口...</span>
       <button onclick="refreshAll()">立即刷新</button>
@@ -177,16 +204,16 @@
   <div class="grid" id="cards-container"></div>
 
 <script>
-// 核心监控标的（前4只为重点被套持仓）
+// 已预填你的真实成本与底仓股数
 const TARGETS = [
-  { symbol: "sh515880", code: "515880", name: "通信ETF", isETF: true, trapped: true, decimals: 3 },
-  { symbol: "sz159327", code: "159327", name: "半导材料ETF", isETF: true, trapped: true, decimals: 3 },
-  { symbol: "sh517520", code: "517520", name: "永赢黄金股ETF", isETF: true, trapped: true, decimals: 3 },
-  { symbol: "sz002716", code: "002716", name: "湖南白银", isETF: false, trapped: true, decimals: 2 },
-  { symbol: "sh518880", code: "518880", name: "华安黄金ETF", isETF: true, trapped: false, decimals: 3 },
-  { symbol: "sh513050", code: "513050", name: "中概互联网ETF", isETF: true, trapped: false, decimals: 3, defaultCost: "1.144" },
-  { symbol: "sh512400", code: "512400", name: "有色金属ETF", isETF: true, trapped: false, decimals: 3 },
-  { symbol: "sz159930", code: "159930", name: "汇添富能源ETF", isETF: true, trapped: false, decimals: 3 }
+  { symbol: "sh515880", code: "515880", name: "通信ETF", isETF: true, trapped: true, decimals: 3, defaultCost: "0.583", defaultShares: 1700 },
+  { symbol: "sz159327", code: "159327", name: "半导材料ETF", isETF: true, trapped: true, decimals: 3, defaultCost: "0.978", defaultShares: 6300 },
+  { symbol: "sh517520", code: "517520", name: "永赢黄金股ETF", isETF: true, trapped: true, decimals: 3, defaultCost: "1.678", defaultShares: 500 },
+  { symbol: "sz002716", code: "002716", name: "湖南白银", isETF: false, trapped: true, decimals: 2, defaultCost: "9.130", defaultShares: 100 },
+  { symbol: "sh518880", code: "518880", name: "华安黄金ETF", isETF: true, trapped: false, decimals: 3, defaultCost: "", defaultShares: 1000 },
+  { symbol: "sh513050", code: "513050", name: "中概互联网ETF", isETF: true, trapped: true, decimals: 3, defaultCost: "1.144", defaultShares: 10000 },
+  { symbol: "sh512400", code: "512400", name: "有色金属ETF", isETF: true, trapped: false, decimals: 3, defaultCost: "", defaultShares: 1000 },
+  { symbol: "sz159930", code: "159930", name: "汇添富能源ETF", isETF: true, trapped: false, decimals: 3, defaultCost: "", defaultShares: 1000 }
 ];
 
 const marketData = {};
@@ -202,19 +229,41 @@ function loadScript(url) {
   });
 }
 
-function getSavedConfig(code, defaultCost = "") {
+function getSavedConfig(t) {
+  const def = {
+    cost: t.defaultCost || "",
+    shares: t.defaultShares || 1000,
+    tShares: t.defaultShares || 1000,
+    buyTier: 1,  // 默认选中一档浅吸（最容易成交）
+    sellTier: 1  // 默认选中一档高抛
+  };
   try {
-    const raw = localStorage.getItem("t_cfg_" + code);
-    if (raw) return JSON.parse(raw);
+    const raw = localStorage.getItem("t_cfg_v2_" + t.code);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return { ...def, ...parsed };
+    }
   } catch (e) {}
-  return { cost: defaultCost, shares: 10000, tShares: 5000 };
+  return def;
 }
 
 function saveConfig(code, field, val) {
-  const cfg = getSavedConfig(code);
+  const t = TARGETS.find(x => x.code === code);
+  const cfg = getSavedConfig(t);
   cfg[field] = val;
-  localStorage.setItem("t_cfg_" + code, JSON.stringify(cfg));
+  // 当用户修改底仓股数时，自动同步单次做T股数（防止做T股数大于底仓算出负数）
+  if (field === "shares") {
+    cfg.tShares = val;
+  }
+  if (field === "tShares" && parseFloat(val) > parseFloat(cfg.shares) && parseFloat(cfg.shares) > 0) {
+    cfg.tShares = cfg.shares;
+  }
+  localStorage.setItem("t_cfg_v2_" + code, JSON.stringify(cfg));
   renderCards();
+}
+
+function selectTier(code, type, tierNum) {
+  saveConfig(code, type === "buy" ? "buyTier" : "sellTier", tierNum);
 }
 
 async function fetchRealtimeQuotes() {
@@ -232,9 +281,7 @@ async function fetchRealtimeQuotes() {
       const low = parseFloat(p[34]) || price;
       const pct = parseFloat(p[32]) || 0;
       const volRatio = p[49] || "--";
-      const turnover = p[38] || "--";
 
-      // 计算日内分时均价 VWAP
       let vwap = (high + low + price) / 3;
       if (p[35] && p[35].includes("/")) {
         const sub = p[35].split("/");
@@ -249,7 +296,7 @@ async function fetchRealtimeQuotes() {
       }
       marketData[t.code] = {
         ...(marketData[t.code] || {}),
-        price, prevClose, open, high, low, pct, vwap, volRatio, turnover
+        price, prevClose, open, high, low, pct, vwap, volRatio
       };
     }
   });
@@ -265,7 +312,6 @@ async function fetchKLines() {
       const dObj = res.data[t.symbol];
       const klist = dObj.qfqday || dObj.day || [];
       if (klist.length >= 2) {
-        // 判断最后一条K线是否是今天，取最近一个完整交易日算枢轴点
         const todayStr = new Date().toISOString().slice(0, 10);
         const lastBar = klist[klist.length - 1];
         const prevBar = (lastBar[0] === todayStr && klist.length >= 2)
@@ -276,14 +322,7 @@ async function fetchKLines() {
         const yLow = parseFloat(prevBar[4]);
         const yClose = parseFloat(prevBar[2]);
 
-        // 经典枢轴点公式 (Pivot Points)
-        const P = (yHigh + yLow + yClose) / 3;
-        const R1 = 2 * P - yLow;
-        const S1 = 2 * P - yHigh;
-        const R2 = P + (yHigh - yLow);
-        const S2 = P - (yHigh - yLow);
-
-        // 真实均线 MA5 / MA10 / MA20
+        // 真实均线
         const closes = klist.map(k => parseFloat(k[2]));
         const avg = arr => arr.reduce((a, b) => a + b, 0) / arr.length;
         const ma5 = closes.length >= 5 ? avg(closes.slice(-5)) : yClose;
@@ -304,7 +343,7 @@ async function fetchKLines() {
 
         marketData[t.code] = {
           ...(marketData[t.code] || {}),
-          P, R1, R2, S1, S2, ma5, ma10, ma20, atr
+          yHigh, yLow, yClose, ma5, ma10, ma20, atr
         };
       }
     }
@@ -312,15 +351,40 @@ async function fetchKLines() {
   await Promise.all(promises);
 }
 
-function getActionSignal(d, dec) {
-  if (!d || !d.price || !d.S1) return "⏳ 正在计算量化点位...";
+// 核心升级：动态计算三档低吸与两档高抛（贴合当日真实盘面，不再高不可攀或低不可及）
+function calcDynamicTiers(d) {
+  if (!d || !d.price || !d.atr) return null;
+  const vwap = d.vwap || d.price;
+  const atr = d.atr;
+  // 以今日分时均价与现价的锚点中心作为动态中枢
+  const center = vwap * 0.65 + d.price * 0.35;
+
+  // 三档低吸：
+  // 一档浅吸（回踩分时均线下沿约 0.28 个 ATR，日内极易接货）
+  const buy1 = Math.min(vwap - 0.22 * atr, d.price - 0.20 * atr);
+  // 二档中吸（日内震荡洗盘位，约 0.50 个 ATR）
+  const buy2 = center - 0.50 * atr;
+  // 三档深吸（黄金坑大跌抄底位，约 0.85 个 ATR）
+  const buy3 = center - 0.85 * atr;
+
+  // 两档高抛：
+  // 一档高抛（日内冲高常规卖出位，约 +0.35 个 ATR）
+  const sell1 = Math.max(vwap + 0.32 * atr, d.price + 0.22 * atr);
+  // 二档强抛（日内大涨脉冲止盈位，约 +0.70 个 ATR）
+  const sell2 = center + 0.70 * atr;
+
+  return { buy1, buy2, buy3, sell1, sell2 };
+}
+
+function getActionSignal(d, tiers, dec) {
+  if (!d || !d.price || !tiers) return "⏳ 正在同步数据...";
   const p = d.price;
-  if (p <= d.S2) return `🟢 跌破强支撑 S2(${d.S2.toFixed(dec)}) · 极度超跌正T低吸区`;
-  if (p <= d.S1 * 1.003) return `🟢 触及 S1(${d.S1.toFixed(dec)}) 支撑区 · 关注分批低吸做正T`;
-  if (p >= d.R2) return `🔴 突破强压力 R2(${d.R2.toFixed(dec)}) · 脉冲高抛锁定T差`;
-  if (p >= d.R1 * 0.997) return `🔴 触及 R1(${d.R1.toFixed(dec)}) 压力区 · 关注高抛做反T`;
   const vwapDiff = ((p - d.vwap) / d.vwap * 100).toFixed(2);
-  return `⚪ 盘中震荡（偏离分时均价 ${vwapDiff > 0 ? "+" : ""}${vwapDiff}%）· 耐心等两端挂单`;
+  if (p <= tiers.buy2) return `🟢 已跌入【二档中吸(${tiers.buy2.toFixed(dec)})】下方 · 极佳低吸做正T机会`;
+  if (p <= tiers.buy1 * 1.002) return `🟢 回踩【一档浅吸(${tiers.buy1.toFixed(dec)})】附近 · 可轻仓低吸做正T`;
+  if (p >= tiers.sell2 * 0.998) return `🔴 冲高触及【二档强抛(${tiers.sell2.toFixed(dec)})】· 建议果断高抛锁利`;
+  if (p > d.vwap * 1.012) return `🔴 拉升偏离均价线 +${vwapDiff}% · 可在【一档高抛(${tiers.sell1.toFixed(dec)})】挂单反T`;
+  return `⚪ 围绕均价线震荡（偏离 ${vwapDiff > 0 ? "+" : ""}${vwapDiff}%）· 挂【一档浅吸 ${tiers.buy1.toFixed(dec)}】守株待兔`;
 }
 
 function renderCards() {
@@ -328,27 +392,31 @@ function renderCards() {
   container.innerHTML = TARGETS.map(t => {
     const d = marketData[t.code] || {};
     const dec = t.decimals;
+    const fmt = v => (v !== undefined && !isNaN(v)) ? v.toFixed(dec) : "--";
     const priceStr = d.price ? d.price.toFixed(dec) : "--";
     const pct = d.pct || 0;
     const pctStr = (pct >= 0 ? "+" : "") + pct.toFixed(2) + "%";
     const colorCls = pct >= 0 ? "up" : "down";
-
-    const fmt = v => (v !== undefined && !isNaN(v)) ? v.toFixed(dec) : "--";
     const atrPct = (d.atr && d.price) ? ((d.atr / d.price) * 100).toFixed(2) + "%" : "--";
 
-    const cfg = getSavedConfig(t.code, t.defaultCost || "");
+    const tiers = calcDynamicTiers(d);
+    const cfg = getSavedConfig(t);
     const costNum = parseFloat(cfg.cost);
     const sharesNum = parseFloat(cfg.shares) || 0;
-    const tSharesNum = parseFloat(cfg.tShares) || 0;
+    const tSharesNum = Math.min(parseFloat(cfg.tShares) || 0, sharesNum);
 
-    // 解套与做T收益测算
-    let calcHtml = `<span style="color:var(--muted)">💡 在上方填入你的被套成本价与股数，自动测算今日做T降本空间</span>`;
-    if (d.price && d.S1 && d.R1 && sharesNum > 0) {
-      const spread = Math.max(0, d.R1 - d.S1);
-      // ETF免印花税，个股002716扣除万5印花税+万1过户佣金摩擦
+    const buyTierNames = { 1: "一档浅吸", 2: "二档中吸", 3: "三档深吸" };
+    const sellTierNames = { 1: "一档高抛", 2: "二档强抛" };
+
+    let calcHtml = `<span style="color:var(--muted)">💡 填入成本价与底仓股数，自动测算做T降本金额</span>`;
+    if (d.price && tiers && sharesNum > 0) {
+      const selBuyPrice = tiers["buy" + (cfg.buyTier || 1)];
+      const selSellPrice = tiers["sell" + (cfg.sellTier || 1)];
+      const spread = Math.max(0, selSellPrice - selBuyPrice);
+      const spreadPct = ((spread / d.price) * 100).toFixed(2);
       const feeRate = t.isETF ? 0.0001 : 0.0007;
       const grossProfit = spread * tSharesNum;
-      const fee = (d.S1 + d.R1) * tSharesNum * feeRate;
+      const fee = (selBuyPrice + selSellPrice) * tSharesNum * feeRate;
       const netProfit = Math.max(0, grossProfit - fee);
       const costDropPerShare = netProfit / sharesNum;
 
@@ -357,14 +425,14 @@ function renderCards() {
         const needUpPct = costNum > d.price ? (((costNum - d.price) / d.price) * 100).toFixed(2) : "0.00";
         const newCost = (costNum - costDropPerShare).toFixed(dec);
         calcHtml = `
-          <div>📌 当前浮盈亏：<b class="${d.price >= costNum ? 'up' : 'down'}">${pnlPct}%</b>（距离回本还需涨 <b>${needUpPct}%</b>）</div>
-          <div>⚡ 若今日在 <b>S1(${fmt(d.S1)})</b> 买、<b>R1(${fmt(d.R1)})</b> 卖做T <b>${tSharesNum}</b> 股：</div>
-          <div>👉 单次净赚约 <b>¥${netProfit.toFixed(1)}</b>，持仓成本可从 <b>${costNum}</b> 降至 <b style="color:#34d399">${newCost}</b></div>
+          <div>📌 当前浮亏：<b class="${d.price >= costNum ? 'up' : 'down'}">${pnlPct}%</b>（距回本需涨 <b>${needUpPct}%</b>）</div>
+          <div>⚡ 按选中档位【<b>${buyTierNames[cfg.buyTier]}(${fmt(selBuyPrice)})</b> 买 → <b>${sellTierNames[cfg.sellTier]}(${fmt(selSellPrice)})</b> 卖】做T <b>${tSharesNum}</b> 股：</div>
+          <div>👉 差价 <b>${spreadPct}%</b>，单次净赚 <b>¥${netProfit.toFixed(1)}</b>，持仓成本从 <b>${costNum}</b> 降至 <b style="color:#34d399">${newCost}</b></div>
         `;
       } else {
         calcHtml = `
-          <div>⚡ 今日 S1→R1 理论T差空间：<b>${fmt(spread)}元 (${((spread/d.price)*100).toFixed(2)}%)</b></div>
-          <div>👉 按做T <b>${tSharesNum}</b> 股测算，单次成功可净赚约 <b>¥${netProfit.toFixed(1)}</b>（每股降本 <b>${costDropPerShare.toFixed(dec)}元</b>）</div>
+          <div>⚡ 选中档位【${buyTierNames[cfg.buyTier]} → ${sellTierNames[cfg.sellTier]}】差价：<b>${fmt(spread)}元 (${spreadPct}%)</b></div>
+          <div>👉 做T <b>${tSharesNum}</b> 股单次净赚约 <b>¥${netProfit.toFixed(1)}</b>（每股降本 <b>${costDropPerShare.toFixed(dec)}元</b>）</div>
         `;
       }
     }
@@ -374,7 +442,7 @@ function renderCards() {
         <div class="top-row">
           <div class="title-group">
             <h2>${t.name} ${t.trapped ? '<span class="tag">重点解套</span>' : ''}</h2>
-            <div class="code">${t.code} · 高:${fmt(d.high)} 低:${fmt(d.low)} · 量比:${d.volRatio || '--'}</div>
+            <div class="code">${t.code} · 今日高:${fmt(d.high)} 低:${fmt(d.low)} · 量比:${d.volRatio || '--'}</div>
           </div>
           <div class="price-box">
             <div class="price ${colorCls}">${priceStr}</div>
@@ -383,53 +451,73 @@ function renderCards() {
         </div>
 
         <div class="signal-bar">
-          <span>${getActionSignal(d, dec)}</span>
+          ${getActionSignal(d, tiers, dec)}
         </div>
 
+        <div class="tier-section-title">
+          <span>🟢 分档低吸买点（点击格子可切换档位）</span>
+          <span>成交通道：一档最易 → 三档最深</span>
+        </div>
         <div class="levels-grid">
-          <div class="lvl-item">
-            <span class="lvl-label">强压 R2</span>
-            <span class="lvl-val lvl-r2">${fmt(d.R2)}</span>
+          <div class="lvl-item ${cfg.buyTier === 1 ? 'active-buy' : ''}" onclick="selectTier('${t.code}', 'buy', 1)">
+            <span class="lvl-label">一档浅吸 (易买到)</span>
+            <span class="lvl-sub">回踩均价线接</span>
+            <span class="lvl-val c-buy">${tiers ? fmt(tiers.buy1) : '--'}</span>
           </div>
-          <div class="lvl-item">
-            <span class="lvl-label">反T高抛 R1</span>
-            <span class="lvl-val lvl-r1">${fmt(d.R1)}</span>
+          <div class="lvl-item ${cfg.buyTier === 2 ? 'active-buy' : ''}" onclick="selectTier('${t.code}', 'buy', 2)">
+            <span class="lvl-label">二档中吸 (常规)</span>
+            <span class="lvl-sub">盘中跳水接</span>
+            <span class="lvl-val c-buy">${tiers ? fmt(tiers.buy2) : '--'}</span>
           </div>
-          <div class="lvl-item">
-            <span class="lvl-label">分时均价</span>
-            <span class="lvl-val lvl-p">${fmt(d.vwap)}</span>
+          <div class="lvl-item ${cfg.buyTier === 3 ? 'active-buy' : ''}" onclick="selectTier('${t.code}', 'buy', 3)">
+            <span class="lvl-label">三档深吸 (黄金坑)</span>
+            <span class="lvl-sub">暴跌抄底接</span>
+            <span class="lvl-val c-buy">${tiers ? fmt(tiers.buy3) : '--'}</span>
           </div>
-          <div class="lvl-item">
-            <span class="lvl-label">正T低吸 S1</span>
-            <span class="lvl-val lvl-s1">${fmt(d.S1)}</span>
+        </div>
+
+        <div class="tier-section-title">
+          <span>🔴 分档高抛卖点 & 🟡 今日平均成本线</span>
+        </div>
+        <div class="levels-grid">
+          <div class="lvl-item" style="cursor:default">
+            <span class="lvl-label">今日分时均价</span>
+            <span class="lvl-sub">日内多空分界</span>
+            <span class="lvl-val c-vwap">${fmt(d.vwap)}</span>
           </div>
-          <div class="lvl-item">
-            <span class="lvl-label">强撑 S2</span>
-            <span class="lvl-val lvl-s2">${fmt(d.S2)}</span>
+          <div class="lvl-item ${cfg.sellTier === 1 ? 'active-sell' : ''}" onclick="selectTier('${t.code}', 'sell', 1)">
+            <span class="lvl-label">一档高抛 (易卖出)</span>
+            <span class="lvl-sub">常规冲高卖</span>
+            <span class="lvl-val c-sell">${tiers ? fmt(tiers.sell1) : '--'}</span>
+          </div>
+          <div class="lvl-item ${cfg.sellTier === 2 ? 'active-sell' : ''}" onclick="selectTier('${t.code}', 'sell', 2)">
+            <span class="lvl-label">二档强抛 (大涨)</span>
+            <span class="lvl-sub">脉冲拉升卖</span>
+            <span class="lvl-val c-sell">${tiers ? fmt(tiers.sell2) : '--'}</span>
           </div>
         </div>
 
         <div class="ma-row">
-          <span>MA5: ${fmt(d.ma5)}</span>
-          <span>MA10: ${fmt(d.ma10)}</span>
-          <span>MA20: ${fmt(d.ma20)}</span>
-          <span>日均波幅ATR: ${fmt(d.atr)} (${atrPct})</span>
+          <span>5日线:${fmt(d.ma5)}</span>
+          <span>10日线:${fmt(d.ma10)}</span>
+          <span>20日线:${fmt(d.ma20)}</span>
+          <span>日均波动空间:${fmt(d.atr)} (${atrPct})</span>
         </div>
 
         <div class="calc-box">
           <div class="calc-inputs">
             <div class="input-grp">
-              <label>我的成本价</label>
+              <label>我的被套成本价</label>
               <input type="number" step="0.001" placeholder="填入成本" value="${cfg.cost}"
                 onchange="saveConfig('${t.code}', 'cost', this.value)" />
             </div>
             <div class="input-grp">
-              <label>底仓股数</label>
+              <label>当前底仓股数</label>
               <input type="number" step="100" value="${cfg.shares}"
                 onchange="saveConfig('${t.code}', 'shares', this.value)" />
             </div>
             <div class="input-grp">
-              <label>单次做T股数</label>
+              <label>单次做T股数(≤底仓)</label>
               <input type="number" step="100" value="${cfg.tShares}"
                 onchange="saveConfig('${t.code}', 'tShares', this.value)" />
             </div>
