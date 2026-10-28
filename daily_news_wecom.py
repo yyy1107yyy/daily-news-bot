@@ -11,7 +11,6 @@ WECOM_WEBHOOK_URL = os.environ["WECOM_WEBHOOK_URL"]
 
 def build_news_link(raw_title: str) -> str:
     """生成极简百度直达链接（严格控制字节长度，防止撑爆企业微信4096字节上限）"""
-    # 只保留纯汉字、字母和数字，绝不留空格，取前12个核心字即可精准定位新闻
     clean_kw = re.sub(r"[^\w\u4e00-\u9fa5]", "", raw_title)[:12]
     encoded_kw = urllib.parse.quote(clean_kw)
     return f"https://www.baidu.com/s?wd={encoded_kw}"
@@ -33,8 +32,10 @@ def get_world_news_rss() -> list:
     return news_list
 
 def get_custom_user_rss() -> list:
-    """源 2：专属财经/黄金/能源/宏观动态 RSS"""
-    custom_rss_url = "https://news.google.com/rss/search?q=%E8%B4%A2%E7%BB%8F+OR+%E9%BB%84%E9%87%91+OR+%E5%8E%9F%E6%B2%B9+OR+%E7%BE%8E%E8%81%94%E5%82%A8+OR+A%E8%82%A1&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
+    """源 2：专属财经/黄金白银/半导体通信/能源/A股动态 RSS"""
+    # 新增白银、半导体、通信关键词，精准覆盖新持仓
+    query = urllib.parse.quote("财经 OR 黄金 OR 白银 OR 原油 OR 半导体 OR 通信 OR 美联储 OR A股")
+    custom_rss_url = f"https://news.google.com/rss/search?q={query}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
     news_list = []
     try:
         feed = feedparser.parse(custom_rss_url)
@@ -49,12 +50,15 @@ def get_custom_user_rss() -> list:
     return news_list
 
 def get_market_quotes() -> list:
-    """获取核心 ETF 实时盘面数据"""
+    """获取核心持仓与关注 ETF/个股实时盘面数据"""
     quotes = []
     targets = [
-        ("sh513050", "中概互联网ETF", "513050"),
+        ("sh515880", "通信ETF", "515880"),
+        ("sz159327", "半导材料ETF", "159327"),
+        ("sz002716", "湖南白银", "002716"),
         ("sh517520", "永赢黄金股ETF", "517520"),
         ("sh518880", "华安黄金ETF", "518880"),
+        ("sh513050", "中概互联网ETF", "513050"),
         ("sh512400", "有色金属ETF", "512400"),
         ("sz159930", "汇添富能源ETF", "159930")
     ]
@@ -76,7 +80,7 @@ def get_market_quotes() -> list:
     return quotes
 
 def generate_ai_insights(quotes: list, world_news: list, custom_news: list) -> str:
-    """调用 AI 生成深度策略（严禁画表格，确保企业微信排版整洁）"""
+    """调用 AI 生成深度策略与被套持仓解套建议（严禁画表格）"""
     quotes_str = " | ".join(quotes)
     all_titles = [n["title"] for n in world_news + custom_news if n.get("title")]
     news_str = "\n".join([f"- {t}" for t in all_titles[:14]])
@@ -84,16 +88,15 @@ def generate_ai_insights(quotes: list, world_news: list, custom_news: list) -> s
     prompt = f"""最新国际与财经要闻：
 {news_str}
 
-核心ETF盘面：{quotes_str}
+核心持仓与关注盘面：{quotes_str}
 
-请作为首席宏观策略师，直接用中文输出一份 280 字左右的精炼点评与实战建议，分为以下两部分（注意：严禁使用 Markdown 表格 `|`，全部使用 `- ` 无序列表）：
+请作为首席宏观策略师，直接用中文输出一份 320 字左右的精炼点评与实战解套建议，分为以下两部分（注意：严禁使用 Markdown 表格 `|`，全部使用 `- ` 无序列表）：
 **1. 核心地缘与宏观洞察**
-- （结合上述新闻一针见血分析地缘、通胀或资金情绪）
-**2. 核心 ETF 实战应对策略**
-- **中概互联网 (513050)**：（给出具体操作与止盈止损建议）
-- **黄金板块 (517520/518880)**：（给出具体操作建议）
-- **有色金属 (512400)**：（给出具体操作建议）
-- **能源ETF (159930)**：（给出具体操作建议）"""
+- （结合上述新闻一针见血分析地缘、通胀、科技算力或贵金属情绪）
+**2. 重点持仓解套与实战应对策略**
+- **科技硬核组（通信ETF 515880 / 半导材料 159327）**：（针对被套持仓，结合盘面给出具体支撑位、反弹减仓或日内做T降成本建议）
+- **贵金属被套组（黄金股 517520 / 湖南白银 002716 / 黄金 518880）**：（结合金银走势，给出具体补仓/做T或止盈止损点位建议）
+- **宏观风向组（中概 513050 / 有色 512400 / 能源 159930）**：（给出简明操作建议）"""
 
     for attempt in range(3):
         try:
@@ -102,7 +105,7 @@ def generate_ai_insights(quotes: list, world_news: list, custom_news: list) -> s
                 json={
                     "model": "openai",
                     "messages": [
-                        {"role": "system", "content": "你是一位专业的宏观与ETF实战策略师，只输出纯中文列表格式正文，严禁使用Markdown表格，不要输出任何英文思考过程。"},
+                        {"role": "system", "content": "你是一位专业的宏观与ETF/个股实战策略师，只输出纯中文列表格式正文，严禁使用Markdown表格，不要输出任何英文思考过程。"},
                         {"role": "user", "content": prompt}
                     ],
                     "temperature": 0.6
@@ -130,7 +133,7 @@ def generate_ai_insights(quotes: list, world_news: list, custom_news: list) -> s
             print(f"主通道第 {attempt+1} 次尝试异常: {e}")
             time.sleep(2)
 
-    return "**1. 核心地缘与宏观洞察**\n- 当前国际地缘风险持续发酵，市场避险情绪升温，资金在风险资产与避险板块间高频博弈。\n**2. 核心 ETF 实战应对策略**\n- **中概与有色**：短线承压，严控仓位耐心等待企稳信号。\n- **黄金与能源**：受益于地缘溢价支撑，逢回调可关注分批配置机会。"
+    return "**1. 核心地缘与宏观洞察**\n- 当前国际地缘与宏观预期交织，资金在科技成长与贵金属避险板块间高频轮动。\n**2. 重点持仓解套与实战应对策略**\n- **通信ETF (515880) / 半导材料 (159327)**：短线关注下方支撑企稳信号，被套仓位切忌盲目割肉，可逢急跌企稳后利用日内底仓做T降低持仓成本。\n- **黄金股 (517520) / 湖南白银 (002716)**：受外盘金银震荡影响，耐心等待企稳反弹再择机分批调整仓位。\n- **中概 / 有色 / 能源**：控制仓位，结合板块轮动逢低分批应对。"
 
 def send_wecom_md(content: str):
     """带字节级安全切割的推送函数，确保任何一部分都绝不因为超4096字节被吞"""
@@ -180,10 +183,10 @@ if __name__ == "__main__":
 ### 二、 🎯 专属财经订阅动态
 {custom_md}
 
-### 三、 核心关注 ETF 盘面
+### 三、 核心持仓与关注盘面
 {quotes_md}
 
-### 四、 💡 首席策略师点评
+### 四、 💡 首席策略师解套与点评
 {ai_text}"""
 
     send_wecom_md(full_msg)
