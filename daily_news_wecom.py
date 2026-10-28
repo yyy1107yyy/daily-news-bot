@@ -33,8 +33,7 @@ def get_world_news_rss() -> list:
 
 def get_custom_user_rss() -> list:
     """源 2：专属财经/黄金白银/半导体通信/能源/A股动态 RSS"""
-    # 新增白银、半导体、通信关键词，精准覆盖新持仓
-    query = urllib.parse.quote("财经 OR 黄金 OR 白银 OR 原油 OR 半导体 OR 通信 OR 美联储 OR A股")
+    query = urllib.parse.quote("财经 OR 黄金 OR 白银 OR 原油 OR 半导体 OR 通信 OR 算力 OR A股")
     custom_rss_url = f"https://news.google.com/rss/search?q={query}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
     news_list = []
     try:
@@ -49,14 +48,15 @@ def get_custom_user_rss() -> list:
         pass
     return news_list
 
-def get_market_quotes() -> list:
-    """获取核心持仓与关注 ETF/个股实时盘面数据"""
-    quotes = []
+def get_market_quotes() -> tuple:
+    """获取实时盘面数据（同时提取现价、涨跌幅、最高价、最低价喂给AI防串台）"""
+    quotes_md = []
+    ai_quotes_detail = []
     targets = [
         ("sh515880", "通信ETF", "515880"),
         ("sz159327", "半导材料ETF", "159327"),
-        ("sz002716", "湖南白银", "002716"),
         ("sh517520", "永赢黄金股ETF", "517520"),
+        ("sz002716", "湖南白银", "002716"),
         ("sh518880", "华安黄金ETF", "518880"),
         ("sh513050", "中概互联网ETF", "513050"),
         ("sh512400", "有色金属ETF", "512400"),
@@ -69,34 +69,48 @@ def get_market_quotes() -> list:
         resp.encoding = "gbk"
         for line, (_, name, code) in zip(resp.text.strip().split(";"), targets):
             parts = line.split("~")
-            if len(parts) > 32:
-                price = parts[3]
+            if len(parts) > 34:
+                price = parts[3]      # 当前最新价
+                prev_close = parts[4] # 昨收价
+                high = parts[33]      # 今日最高价
+                low = parts[34]       # 今日最低价
                 pct = float(parts[32])
                 sign = "🔴" if pct >= 0 else "🟢"
                 pct_str = f"+{pct:.2f}%" if pct >= 0 else f"{pct:.2f}%"
-                quotes.append(f"- {sign} **{name} ({code})**：`{price}` (**{pct_str}**)")
+                quotes_md.append(f"- {sign} **{name} ({code})**：`{price}` (**{pct_str}**)  `[高:{high} 低:{low}]`")
+                ai_quotes_detail.append(
+                    f"【{name}(代码:{code})】精确现价={price}元, 今日涨跌幅={pct_str}, 昨收={prev_close}元, 今日最高={high}元, 今日最低={low}元"
+                )
     except Exception as e:
-        quotes.append(f"- 行情获取异常: {e}")
-    return quotes
+        quotes_md.append(f"- 行情获取异常: {e}")
+    return quotes_md, ai_quotes_detail
 
-def generate_ai_insights(quotes: list, world_news: list, custom_news: list) -> str:
-    """调用 AI 生成深度策略与被套持仓解套建议（严禁画表格）"""
-    quotes_str = " | ".join(quotes)
+def generate_ai_insights(ai_quotes_detail: list, world_news: list, custom_news: list) -> str:
+    """调用 AI 生成深度策略（严禁价格串台、严禁编造均线）"""
+    quotes_block = "\n".join(ai_quotes_detail)
     all_titles = [n["title"] for n in world_news + custom_news if n.get("title")]
     news_str = "\n".join([f"- {t}" for t in all_titles[:14]])
     
     prompt = f"""最新国际与财经要闻：
 {news_str}
 
-核心持仓与关注盘面：{quotes_str}
+真实盘面精确数据（请严格核对每只标的的精确现价，绝对禁止将不同标的的价格张冠李戴！）：
+{quotes_block}
 
-请作为首席宏观策略师，直接用中文输出一份 320 字左右的精炼点评与实战解套建议，分为以下两部分（注意：严禁使用 Markdown 表格 `|`，全部使用 `- ` 无序列表）：
+请作为首席宏观策略师，直接用中文输出一份 350 字左右的精炼点评与解套建议，严格遵守以下铁律：
+1. 严禁使用 Markdown 表格 `|`，全部使用 `- ` 无序列表。
+2. 严禁编造未提供的“5日/20日均线”数据！所有支撑位、压力位、做T区间必须严格基于上方提供的【精确现价、昨收、今日最高、今日最低】在合理几个百分点的范围内推算！
+
+请按以下格式输出：
 **1. 核心地缘与宏观洞察**
-- （结合上述新闻一针见血分析地缘、通胀、科技算力或贵金属情绪）
-**2. 重点持仓解套与实战应对策略**
-- **科技硬核组（通信ETF 515880 / 半导材料 159327）**：（针对被套持仓，结合盘面给出具体支撑位、反弹减仓或日内做T降成本建议）
-- **贵金属被套组（黄金股 517520 / 湖南白银 002716 / 黄金 518880）**：（结合金银走势，给出具体补仓/做T或止盈止损点位建议）
-- **宏观风向组（中概 513050 / 有色 512400 / 能源 159930）**：（给出简明操作建议）"""
+- （结合上述新闻一针见血分析地缘、通胀、AI算力通信或金银情绪）
+**2. 四大被套持仓一对一解套策略**
+- **通信ETF (515880)**：（先写出当前精确现价，再结合今日高低点给出日内做T或反弹减亏的具体价格区间）
+- **半导材料ETF (159327)**：（先写出当前精确现价，再给出具体支撑压力与解套操作建议）
+- **永赢黄金股 (517520)**：（先写出当前精确现价，结合金价走势给出具体解套/做T点位）
+- **湖南白银 (002716)**：（先写出当前精确现价，结合白银弹性给出具体支撑压力与操作建议）
+**3. 宏观风向观察（黄金518880 / 中概513050 / 有色512400 / 能源159930）**
+- （结合各自精确现价，用一两句话给出简明应对方向）"""
 
     for attempt in range(3):
         try:
@@ -105,10 +119,10 @@ def generate_ai_insights(quotes: list, world_news: list, custom_news: list) -> s
                 json={
                     "model": "openai",
                     "messages": [
-                        {"role": "system", "content": "你是一位专业的宏观与ETF/个股实战策略师，只输出纯中文列表格式正文，严禁使用Markdown表格，不要输出任何英文思考过程。"},
+                        {"role": "system", "content": "你是一位严谨的量化与ETF实战策略师。你必须100%忠实于用户提供的每只股票的精确现价，所有给出的支撑位和目标价必须与该标的现价处于同一数量级（误差不超过±10%），严禁串台，严禁编造均线，严禁使用表格。"},
                         {"role": "user", "content": prompt}
                     ],
-                    "temperature": 0.6
+                    "temperature": 0.3
                 },
                 timeout=30
             )
@@ -133,7 +147,7 @@ def generate_ai_insights(quotes: list, world_news: list, custom_news: list) -> s
             print(f"主通道第 {attempt+1} 次尝试异常: {e}")
             time.sleep(2)
 
-    return "**1. 核心地缘与宏观洞察**\n- 当前国际地缘与宏观预期交织，资金在科技成长与贵金属避险板块间高频轮动。\n**2. 重点持仓解套与实战应对策略**\n- **通信ETF (515880) / 半导材料 (159327)**：短线关注下方支撑企稳信号，被套仓位切忌盲目割肉，可逢急跌企稳后利用日内底仓做T降低持仓成本。\n- **黄金股 (517520) / 湖南白银 (002716)**：受外盘金银震荡影响，耐心等待企稳反弹再择机分批调整仓位。\n- **中概 / 有色 / 能源**：控制仓位，结合板块轮动逢低分批应对。"
+    return "**1. 核心地缘与宏观洞察**\n- 当前国际地缘与宏观预期交织，资金在科技成长与贵金属避险板块间高频轮动。\n**2. 四大被套持仓一对一解套策略**\n- **通信ETF (515880) & 半导材料 (159327)**：请参考上方盘面高低点区间，被套仓位切忌在日内低点盲目割肉，可逢急跌企稳后利用底仓做T降低成本。\n- **黄金股 (517520) & 湖南白银 (002716)**：受外盘金银震荡影响，关注日内低点支撑，耐心等待企稳反弹再择机分批T出。"
 
 def send_wecom_md(content: str):
     """带字节级安全切割的推送函数，确保任何一部分都绝不因为超4096字节被吞"""
@@ -167,12 +181,12 @@ if __name__ == "__main__":
     
     world_news = get_world_news_rss()
     custom_news = get_custom_user_rss()
-    quotes = get_market_quotes()
-    ai_text = generate_ai_insights(quotes, world_news, custom_news)
+    quotes_md, ai_quotes_detail = get_market_quotes()
+    ai_text = generate_ai_insights(ai_quotes_detail, world_news, custom_news)
     
     world_md = "\n".join([n["md"] for n in world_news]) if world_news else "- 暂无"
     custom_md = "\n".join([n["md"] for n in custom_news]) if custom_news else "- 暂无"
-    quotes_md = "\n".join(quotes) if quotes else "- 暂无"
+    quotes_str = "\n".join(quotes_md) if quotes_md else "- 暂无"
     
     full_msg = f"""🌍 **【宏观战情定期速报】**
 > 更新时间：{bj_time}
@@ -184,7 +198,7 @@ if __name__ == "__main__":
 {custom_md}
 
 ### 三、 核心持仓与关注盘面
-{quotes_md}
+{quotes_str}
 
 ### 四、 💡 首席策略师解套与点评
 {ai_text}"""
