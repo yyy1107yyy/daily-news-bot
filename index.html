@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>持仓解套与分档做T量化驾驶舱</title>
+  <title>持仓解套与防T飞量化驾驶舱</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -39,7 +39,7 @@
     }
     .header h1 { font-size: 1.2rem; display: flex; align-items: center; gap: 8px; }
     .sub-tip { font-size: 0.8rem; color: #38bdf8; margin-top: 2px; }
-    .controls { display: flex; align-items: center; gap: 12px; font-size: 0.85rem; color: var(--muted); }
+    .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 0.85rem; color: var(--muted); }
     button {
       background: var(--accent);
       color: #fff;
@@ -48,9 +48,15 @@
       border-radius: 6px;
       cursor: pointer;
       font-weight: 600;
-      font-size: 0.85rem;
+      font-size: 0.84rem;
+      transition: all 0.15s;
     }
     button:hover { opacity: 0.9; }
+    button.mode-btn {
+      background: rgba(245, 158, 11, 0.18);
+      color: #fbbf24;
+      border: 1px solid rgba(245, 158, 11, 0.4);
+    }
     .grid {
       max-width: 1360px;
       margin: 0 auto;
@@ -88,10 +94,15 @@
     .signal-bar {
       padding: 7px 11px;
       border-radius: 8px;
-      font-size: 0.82rem;
+      font-size: 0.81rem;
       font-weight: 600;
       background: rgba(59, 130, 246, 0.12);
       border: 1px solid rgba(59, 130, 246, 0.3);
+    }
+    .signal-bar.warn-fly {
+      background: rgba(239, 68, 68, 0.15);
+      border-color: rgba(239, 68, 68, 0.45);
+      color: #fca5a5;
     }
 
     .tier-section-title {
@@ -183,7 +194,7 @@
       width: 100%;
     }
     .calc-result {
-      font-size: 0.8rem;
+      font-size: 0.79rem;
       color: #e2e8f0;
       background: rgba(16, 185, 129, 0.08);
       border: 1px solid rgba(16, 185, 129, 0.25);
@@ -202,11 +213,12 @@
 
   <div class="header">
     <div>
-      <h1>🎯 持仓解套与分档做T量化驾驶舱</h1>
-      <div class="sub-tip">💡 每个档位已同步显示【盘面涨跌幅(相对昨收)】与【距现价幅度】，点击格子可切换档位测算</div>
+      <h1>🎯 持仓解套与防T飞量化驾驶舱</h1>
+      <div class="sub-tip" id="mode-desc">🛡️ 当前模式：【防T飞棘轮模式】下跌时买点绝不后退（安心挂单），拉升时高抛点随均价自动上移（防早盘卖飞）！</div>
     </div>
     <div class="controls">
-      <span id="update-time">正在同步真实日K线与实时盘口...</span>
+      <button class="mode-btn" id="toggle-mode-btn" onclick="toggleCalcMode()">切换为：实时浮动模式</button>
+      <span id="update-time">正在同步数据...</span>
       <button onclick="refreshAll()">立即刷新</button>
     </div>
   </div>
@@ -226,6 +238,27 @@ const TARGETS = [
 ];
 
 const marketData = {};
+// 默认开启 "ratchet" (防T飞棘轮模式)，可选 "dynamic" (实时跟随)
+let calcMode = localStorage.getItem("t_calc_mode") || "ratchet";
+
+function updateModeUI() {
+  const desc = document.getElementById("mode-desc");
+  const btn = document.getElementById("toggle-mode-btn");
+  if (calcMode === "ratchet") {
+    desc.innerText = "🛡️ 当前：【防T飞棘轮模式】股价下跌时买点绝不后退（挂单省心），强势拉升或放量时高抛点自动上移拓宽（严防T飞）！";
+    btn.innerText = "🔄 切换为：实时跟随模式";
+  } else {
+    desc.innerText = "🌊 当前：【实时跟随模式】三档买点与卖点每15秒完全跟随当前最新价动态浮动。";
+    btn.innerText = "🛡️ 切换为：防T飞棘轮模式";
+  }
+}
+
+function toggleCalcMode() {
+  calcMode = calcMode === "ratchet" ? "dynamic" : "ratchet";
+  localStorage.setItem("t_calc_mode", calcMode);
+  updateModeUI();
+  renderCards();
+}
 
 function loadScript(url) {
   return new Promise((resolve) => {
@@ -274,7 +307,6 @@ function selectTier(code, type, tierNum) {
   saveConfig(code, type === "buy" ? "buyTier" : "sellTier", tierNum);
 }
 
-// 格式化相对于昨收的盘面涨跌幅
 function fmtDayPct(targetPrice, prevClose) {
   if (!targetPrice || !prevClose || isNaN(targetPrice) || isNaN(prevClose)) return "";
   const pct = ((targetPrice - prevClose) / prevClose) * 100;
@@ -282,7 +314,6 @@ function fmtDayPct(targetPrice, prevClose) {
   return `(${sign}${pct.toFixed(2)}%)`;
 }
 
-// 格式化距离当前现价的差幅
 function fmtDiffNow(targetPrice, curPrice) {
   if (!targetPrice || !curPrice || isNaN(targetPrice) || isNaN(curPrice)) return "--";
   const diff = ((targetPrice - curPrice) / curPrice) * 100;
@@ -304,7 +335,7 @@ async function fetchRealtimeQuotes() {
       const high = parseFloat(p[33]) || price;
       const low = parseFloat(p[34]) || price;
       const pct = parseFloat(p[32]) || 0;
-      const volRatio = p[49] || "--";
+      const volRatio = parseFloat(p[49]) || 1.0;
 
       let vwap = (high + low + price) / 3;
       if (p[35] && p[35].includes("/")) {
@@ -373,31 +404,64 @@ async function fetchKLines() {
   await Promise.all(promises);
 }
 
+// 核心升级：支持【防T飞棘轮模式】与【实时跟随模式】
 function calcDynamicTiers(d) {
   if (!d || !d.price || !d.atr) return null;
   const vwap = d.vwap || d.price;
   const atr = d.atr;
-  const center = vwap * 0.65 + d.price * 0.35;
+  const prevClose = d.prevClose || d.price;
+  const open = d.open || prevClose;
 
-  const buy1 = Math.min(vwap - 0.22 * atr, d.price - 0.20 * atr);
-  const buy2 = center - 0.50 * atr;
-  const buy3 = center - 0.85 * atr;
+  if (calcMode === "ratchet") {
+    // 1. 买点定靶不后退：以【昨收/今开均值】与【今日分时均价】的较高者作为强势支撑锚点
+    // 股价下跌时，它锚定在均价/昨收，绝不随现价下跌而往后缩！
+    const baseAnchor = (prevClose + open) / 2;
+    const buyAnchor = Math.max(baseAnchor, vwap);
 
-  const sell1 = Math.max(vwap + 0.32 * atr, d.price + 0.22 * atr);
-  const sell2 = center + 0.70 * atr;
+    const buy1 = buyAnchor - 0.25 * atr;
+    const buy2 = buyAnchor - 0.52 * atr;
+    const buy3 = buyAnchor - 0.85 * atr;
 
-  return { buy1, buy2, buy3, sell1, sell2 };
+    // 2. 卖点防T飞自动上移：当盘中放量（量比>1.3）或大涨（涨幅>2.5%）时，自动放宽卖点系数，防止早盘冲高把筹码卖丢！
+    const isStrong = (d.pct >= 2.5) || (d.volRatio >= 1.35 && d.price > vwap);
+    const sellBoost = isStrong ? 1.28 : 1.0;
+
+    // 卖点基准取【昨收、分时均价、今日最高价回落锚点】的最大值，水涨船高
+    const sellAnchor = Math.max(prevClose, vwap, d.high - 0.15 * atr);
+    const sell1 = sellAnchor + (0.38 * atr * sellBoost);
+    const sell2 = sellAnchor + (0.75 * atr * sellBoost);
+
+    return { buy1, buy2, buy3, sell1, sell2, isStrong };
+  } else {
+    // 实时跟随模式
+    const center = vwap * 0.65 + d.price * 0.35;
+    const buy1 = Math.min(vwap - 0.22 * atr, d.price - 0.20 * atr);
+    const buy2 = center - 0.50 * atr;
+    const buy3 = center - 0.85 * atr;
+    const sell1 = Math.max(vwap + 0.32 * atr, d.price + 0.22 * atr);
+    const sell2 = center + 0.70 * atr;
+    return { buy1, buy2, buy3, sell1, sell2, isStrong: false };
+  }
 }
 
 function getActionSignal(d, tiers, dec) {
-  if (!d || !d.price || !tiers) return "⏳ 正在同步数据...";
+  if (!d || !d.price || !tiers) return { text: "⏳ 正在同步数据...", warnFly: false };
   const p = d.price;
   const vwapDiff = ((p - d.vwap) / d.vwap * 100).toFixed(2);
-  if (p <= tiers.buy2) return `🟢 已跌入【二档中吸 ${tiers.buy2.toFixed(dec)} ${fmtDayPct(tiers.buy2, d.prevClose)}】· 极佳正T机会`;
-  if (p <= tiers.buy1 * 1.002) return `🟢 回踩【一档浅吸 ${tiers.buy1.toFixed(dec)} ${fmtDayPct(tiers.buy1, d.prevClose)}】· 可轻仓低吸`;
-  if (p >= tiers.sell2 * 0.998) return `🔴 冲高触及【二档强抛 ${tiers.sell2.toFixed(dec)} ${fmtDayPct(tiers.sell2, d.prevClose)}】· 果断高抛锁利`;
-  if (p > d.vwap * 1.012) return `🔴 拉升偏离均价线 +${vwapDiff}% · 可在【一档高抛 ${tiers.sell1.toFixed(dec)} ${fmtDayPct(tiers.sell1, d.prevClose)}】挂单反T`;
-  return `⚪ 围绕均价线震荡（偏离 ${vwapDiff > 0 ? "+" : ""}${vwapDiff}%）· 挂【一档浅吸 ${tiers.buy1.toFixed(dec)} ${fmtDayPct(tiers.buy1, d.prevClose)}】接货`;
+
+  // 防T飞核心预警：当放量突破或大涨且站稳分时均线之上时，严禁盲目全仓先卖后买（反T）
+  if (tiers.isStrong && p > d.vwap) {
+    if (p >= tiers.sell2 * 0.998) {
+      return { text: `🔥 放量主升触及【二档强抛 ${tiers.sell2.toFixed(dec)}】· 最多卖 1/3 底仓，严防T飞！`, warnFly: true };
+    }
+    return { text: `🔥 盘面强势防T飞保护中（高抛位已自动上移）· 切忌过早反T卖空底仓，等回踩均线做正T！`, warnFly: true };
+  }
+
+  if (p <= tiers.buy2) return { text: `🟢 已跌入【二档中吸 ${tiers.buy2.toFixed(dec)} ${fmtDayPct(tiers.buy2, d.prevClose)}】· 极佳正T接货区`, warnFly: false };
+  if (p <= tiers.buy1 * 1.002) return { text: `🟢 触及【一档浅吸 ${tiers.buy1.toFixed(dec)} ${fmtDayPct(tiers.buy1, d.prevClose)}】· 可先买后卖做正T`, warnFly: false };
+  if (p >= tiers.sell2 * 0.998) return { text: `🔴 冲高触及【二档强抛 ${tiers.sell2.toFixed(dec)} ${fmtDayPct(tiers.sell2, d.prevClose)}】· 分批高抛锁利`, warnFly: false };
+  if (p >= tiers.sell1 * 0.998) return { text: `🔴 触及【一档高抛 ${tiers.sell1.toFixed(dec)} ${fmtDayPct(tiers.sell1, d.prevClose)}】· 可卖 30% 底仓做小反T`, warnFly: false };
+  return { text: `⚪ 围绕均价线震荡（偏离 ${vwapDiff > 0 ? "+" : ""}${vwapDiff}%）· 买点已锚定不后退，挂【一档 ${tiers.buy1.toFixed(dec)}】守株待兔`, warnFly: false };
 }
 
 function renderTierBox(code, type, tierNum, label, sub, priceVal, d, dec, isActive) {
@@ -433,10 +497,15 @@ function renderCards() {
     const atrPct = (d.atr && d.price) ? ((d.atr / d.price) * 100).toFixed(2) + "%" : "--";
 
     const tiers = calcDynamicTiers(d);
+    const sig = getActionSignal(d, tiers, dec);
     const cfg = getSavedConfig(t);
     const costNum = parseFloat(cfg.cost);
     const sharesNum = parseFloat(cfg.shares) || 0;
     const tSharesNum = Math.min(parseFloat(cfg.tShares) || 0, sharesNum);
+
+    // 防T飞分批挂单股数建议（按100股整数倍拆单）
+    const lot1 = Math.max(100, Math.round((tSharesNum * 0.4) / 100) * 100);
+    const lot2 = Math.max(0, tSharesNum - lot1);
 
     const buyTierNames = { 1: "一档浅吸", 2: "二档中吸", 3: "三档深吸" };
     const sellTierNames = { 1: "一档高抛", 2: "二档强抛" };
@@ -453,20 +522,24 @@ function renderCards() {
       const netProfit = Math.max(0, grossProfit - fee);
       const costDropPerShare = netProfit / sharesNum;
 
+      const splitTip = tSharesNum >= 400
+        ? `🛡️ <b>防T飞拆单法</b>：建议在【一档高抛 ${fmt(tiers.sell1)}】只挂卖 <b>${lot1}股</b>，留 <b>${lot2}股</b> 挂【二档强抛 ${fmt(tiers.sell2)}】博大肉！`
+        : `🛡️ <b>防T飞法则</b>：股数较少建议优先做<b>正T（跌到绿字先买，涨到红字再卖）</b>，永远不丢底仓！`;
+
       if (costNum > 0) {
         const pnlPct = ((d.price - costNum) / costNum * 100).toFixed(2);
         const needUpPct = costNum > d.price ? (((costNum - d.price) / d.price) * 100).toFixed(2) : "0.00";
         const newCost = (costNum - costDropPerShare).toFixed(dec);
         const newPnlPct = ((d.price - newCost) / newCost * 100).toFixed(2);
         calcHtml = `
-          <div>📌 当前浮盈亏：<b class="${d.price >= costNum ? 'up' : 'down'}">${pnlPct}%</b>（距回本还需涨 <b>+${needUpPct}%</b>）</div>
-          <div>⚡ 按选中【<b>${buyTierNames[cfg.buyTier]} ${fmt(selBuyPrice)} ${fmtDayPct(selBuyPrice, d.prevClose)}</b> 买 → <b>${sellTierNames[cfg.sellTier]} ${fmt(selSellPrice)} ${fmtDayPct(selSellPrice, d.prevClose)}</b> 卖】做T <b>${tSharesNum}</b> 股：</div>
-          <div>👉 单次差价 <b>+${spreadPct}%</b>，净赚 <b>¥${netProfit.toFixed(1)}</b>，持仓成本从 <b>${costNum}</b> 降至 <b style="color:#34d399">${newCost}</b>（浮亏缩至 <b>${newPnlPct}%</b>）</div>
+          <div>📌 当前浮亏：<b class="${d.price >= costNum ? 'up' : 'down'}">${pnlPct}%</b>（距回本还需涨 <b>+${needUpPct}%</b>）</div>
+          <div>⚡ 选中【<b>${buyTierNames[cfg.buyTier]} ${fmt(selBuyPrice)}</b> 买 → <b>${sellTierNames[cfg.sellTier]} ${fmt(selSellPrice)}</b> 卖】做T <b>${tSharesNum}</b> 股：净赚 <b>¥${netProfit.toFixed(1)}</b>，成本降至 <b style="color:#34d399">${newCost}</b>（浮亏缩至 <b>${newPnlPct}%</b>）</div>
+          <div style="color:#fcd34d;margin-top:2px;">${splitTip}</div>
         `;
       } else {
         calcHtml = `
-          <div>⚡ 选中档位【${buyTierNames[cfg.buyTier]} ${fmt(selBuyPrice)} → ${sellTierNames[cfg.sellTier]} ${fmt(selSellPrice)}】差价：<b>${fmt(spread)}元 (+${spreadPct}%)</b></div>
-          <div>👉 做T <b>${tSharesNum}</b> 股单次净赚约 <b>¥${netProfit.toFixed(1)}</b>（每股降本 <b>${costDropPerShare.toFixed(dec)}元</b>）</div>
+          <div>⚡ 选中档位【${buyTierNames[cfg.buyTier]} ${fmt(selBuyPrice)} → ${sellTierNames[cfg.sellTier]} ${fmt(selSellPrice)}】差价：<b>${fmt(spread)}元 (+${spreadPct}%)</b>，净赚约 <b>¥${netProfit.toFixed(1)}</b></div>
+          <div style="color:#fcd34d;margin-top:2px;">${splitTip}</div>
         `;
       }
     }
@@ -487,27 +560,28 @@ function renderCards() {
           </div>
         </div>
 
-        <div class="signal-bar">
-          ${getActionSignal(d, tiers, dec)}
+        <div class="signal-bar ${sig.warnFly ? 'warn-fly' : ''}">
+          ${sig.text}
         </div>
 
         <div class="tier-section-title">
-          <span>🟢 分档低吸买点（带盘面涨跌幅与距现价差幅）</span>
-          <span>点击格子可切换档位</span>
+          <span>🟢 分档低吸买点（下跌时不后退，安心提前挂单）</span>
+          <span>点击格子可切换</span>
         </div>
         <div class="levels-grid">
-          ${renderTierBox(t.code, "buy", 1, "一档浅吸 (易买到)", "回踩均价线接", tiers ? tiers.buy1 : undefined, d, dec, cfg.buyTier === 1)}
-          ${renderTierBox(t.code, "buy", 2, "二档中吸 (常规)", "盘中跳水接", tiers ? tiers.buy2 : undefined, d, dec, cfg.buyTier === 2)}
-          ${renderTierBox(t.code, "buy", 3, "三档深吸 (黄金坑)", "暴跌抄底接", tiers ? tiers.buy3 : undefined, d, dec, cfg.buyTier === 3)}
+          ${renderTierBox(t.code, "buy", 1, "一档浅吸 (定靶)", "回踩均线接", tiers ? tiers.buy1 : undefined, d, dec, cfg.buyTier === 1)}
+          ${renderTierBox(t.code, "buy", 2, "二档中吸 (定靶)", "盘中跳水接", tiers ? tiers.buy2 : undefined, d, dec, cfg.buyTier === 2)}
+          ${renderTierBox(t.code, "buy", 3, "三档深吸 (定靶)", "暴跌黄金坑", tiers ? tiers.buy3 : undefined, d, dec, cfg.buyTier === 3)}
         </div>
 
         <div class="tier-section-title">
-          <span>🔴 分档高抛卖点 & 🟡 今日平均成本线</span>
+          <span>🔴 防T飞高抛卖点（强势日随均价自动上移拓宽）</span>
+          <span>${tiers && tiers.isStrong ? '🔥 已触发防T飞上移' : '常规压力区间'}</span>
         </div>
         <div class="levels-grid">
-          ${renderTierBox(t.code, "vwap", 0, "今日分时均价", "日内多空分界", d.vwap, d, dec, false)}
-          ${renderTierBox(t.code, "sell", 1, "一档高抛 (易卖出)", "常规冲高卖", tiers ? tiers.sell1 : undefined, d, dec, cfg.sellTier === 1)}
-          ${renderTierBox(t.code, "sell", 2, "二档强抛 (大涨)", "脉冲拉升卖", tiers ? tiers.sell2 : undefined, d, dec, cfg.sellTier === 2)}
+          ${renderTierBox(t.code, "vwap", 0, "今日分时均价", "多空生命线", d.vwap, d, dec, false)}
+          ${renderTierBox(t.code, "sell", 1, "一档高抛 (卖4成)", "常规冲高卖", tiers ? tiers.sell1 : undefined, d, dec, cfg.sellTier === 1)}
+          ${renderTierBox(t.code, "sell", 2, "二档强抛 (卖6成)", "主升脉冲卖", tiers ? tiers.sell2 : undefined, d, dec, cfg.sellTier === 2)}
         </div>
 
         <div class="ma-row">
@@ -545,12 +619,13 @@ function renderCards() {
 }
 
 async function refreshAll() {
+  updateModeUI();
   document.getElementById("update-time").innerText = "正在刷新实时盘口与日K数据...";
   await fetchRealtimeQuotes();
   await fetchKLines();
   renderCards();
   const now = new Date().toLocaleTimeString("zh-CN", { hour12: false });
-  document.getElementById("update-time").innerText = `最后同步: ${now} (盘中每15秒自动刷新)`;
+  document.getElementById("update-time").innerText = `最后同步: ${now} (每15秒刷新)`;
 }
 
 refreshAll();
@@ -558,7 +633,7 @@ setInterval(async () => {
   await fetchRealtimeQuotes();
   renderCards();
   const now = new Date().toLocaleTimeString("zh-CN", { hour12: false });
-  document.getElementById("update-time").innerText = `最后同步: ${now} (盘中每15秒自动刷新)`;
+  document.getElementById("update-time").innerText = `最后同步: ${now} (每15秒刷新)`;
 }, 15000);
 </script>
 </body>
